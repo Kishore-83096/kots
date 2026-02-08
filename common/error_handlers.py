@@ -1,6 +1,6 @@
 from http import HTTPStatus
 from werkzeug.exceptions import HTTPException
-from response import error_response
+from .response import error_response
 
 
 def register_error_handlers(app):

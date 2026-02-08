@@ -1,6 +1,6 @@
 from functools import wraps
 from flask_jwt_extended import jwt_required, get_jwt_identity
-from response import error_response
+from .response import error_response
 from users.models_users import RegistrationUser
 
 

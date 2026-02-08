@@ -1,35 +1,46 @@
 from flask import Blueprint, request
-from response import success_response, error_response
-from permissions import role_required
-from master.schemas_master import validate_admin_create_payload
-from master.services_master import create_admin_user
+from common.response import success_response, error_response
+from common.permissions import role_required
+from flask_jwt_extended import get_jwt_identity
+from master.services_master import (
+    master_health_service,
+    master_control_service,
+    master_create_admin_service,
+    master_list_admins_service,
+)
 
 master_bp = Blueprint("master", __name__, url_prefix="/master")
 
 @master_bp.route("/health")
 def health():
-    return success_response(message="Master service healthy", data={"service": "master"})
+    result, err = master_health_service()
+    if err:
+        return error_response(**err)
+    return success_response(status_code=result["status_code"], message=result["message"], data=result["data"])
 
 
 @master_bp.route("/control")
 @role_required("master")
 def control_panel():
-    return success_response(message="Master control panel", data={"scope": "master"})
+    result, err = master_control_service()
+    if err:
+        return error_response(**err)
+    return success_response(status_code=result["status_code"], message=result["message"], data=result["data"])
 
 
 @master_bp.route("/create-admin", methods=["POST"])
 @role_required("master")
 def create_admin():
-    payload, errors = validate_admin_create_payload(request.get_json(silent=True))
-    if errors:
-        return error_response(status_code=400, message="Validation Error", user_message=" ".join(errors))
-
-    user, err = create_admin_user(payload)
+    result, err = master_create_admin_service(request.get_json(silent=True))
     if err:
-        return error_response(status_code=409, message="Conflict", user_message=err)
+        return error_response(**err)
+    return success_response(status_code=result["status_code"], message=result["message"], data=result["data"])
 
-    return success_response(
-        status_code=201,
-        message=f"Admin account created for {user.email}.",
-        data={"id": user.id, "email": user.email, "role": "admin"},
-    )
+
+@master_bp.route("/admins", methods=["GET"])
+@role_required("master")
+def get_admins():
+    result, err = master_list_admins_service(request.args, get_jwt_identity())
+    if err:
+        return error_response(**err)
+    return success_response(status_code=result["status_code"], message=result["message"], data=result["data"])

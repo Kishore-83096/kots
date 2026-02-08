@@ -1,12 +1,15 @@
 from flask import Flask
 from config import Config
 from extensions import db, migrate, jwt
-from models import User
+#from models import User
+# Import models so Alembic sees them for migrations
+from admins import models_admins  # noqa: F401
+from users import models_users  # noqa: F401
 from master.routes_master import master_bp
 from admins.routes_admins import admins_bp
 from users.routes_users import users_bp
-from error_handlers import register_error_handlers
-from response import success_response
+from common.error_handlers import register_error_handlers
+from common.response import success_response
 
 def create_app():
     app = Flask(__name__)
