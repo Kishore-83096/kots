@@ -3,7 +3,16 @@ from dotenv import load_dotenv
 
 load_dotenv()
 
+
+def _parse_cors_origins(value):
+    if not value:
+        return []
+    return [origin.strip() for origin in value.split(",") if origin.strip()]
+
 class Config:
+    DEBUG = os.getenv("DEBUG", "False").lower() in ("true", "1", "t")
     SQLALCHEMY_DATABASE_URI = os.getenv("DATABASE_URL")
     SQLALCHEMY_TRACK_MODIFICATIONS = False
     JWT_SECRET_KEY = os.getenv("JWT_SECRET_KEY")
+    CLOUDINARY_URL = os.getenv("CLOUDINARY_URL")
+    ANGULAR_CORS_ORIGINS = _parse_cors_origins(os.getenv("ANGULAR_CORS_ORIGINS", ""))

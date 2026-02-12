@@ -54,5 +54,15 @@ def serialize_admin_created(user: RegistrationUser):
     }
 
 
+def serialize_admin_detail(user: RegistrationUser):
+    role = "master" if user.is_master else "admin"
+    return {
+        "id": user.id,
+        "email": user.email,
+        "role": role,
+        "created_at": user.created_at.isoformat(),
+    }
+
+
 def serialize_admins_list(data):
     return data

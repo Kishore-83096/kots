@@ -8,6 +8,7 @@ class Building(db.Model):
     ASSET_PIC_FOLDER = "kots/assets"
 
     id = db.Column(db.Integer, primary_key=True)
+    admin_id = db.Column(db.Integer, db.ForeignKey("registration_users.id"), nullable=False)
     name = db.Column(db.String(120), nullable=False)
     address = db.Column(db.String(255), nullable=False)
     city = db.Column(db.String(80), nullable=False)
@@ -20,6 +21,7 @@ class Building(db.Model):
     created_at = db.Column(db.DateTime, default=datetime.utcnow, nullable=False)
 
     towers = db.relationship("Tower", backref="building", lazy=True, cascade="all, delete-orphan")
+    amenities = db.relationship("Amenity", backref="building", lazy=True, cascade="all, delete-orphan")
 
 
 class Tower(db.Model):
@@ -83,6 +85,7 @@ class Amenity(db.Model):
     ASSET_PIC_FOLDER = "kots/assets"
 
     id = db.Column(db.Integer, primary_key=True)
+    building_id = db.Column(db.Integer, db.ForeignKey("buildings.id"), nullable=False)
     name = db.Column(db.String(80), unique=True, nullable=False)
     description = db.Column(db.String(255))
     picture_url = db.Column(db.String(512), nullable=True)
@@ -97,9 +100,15 @@ class Booking(db.Model):
     id = db.Column(db.Integer, primary_key=True)
     user_id = db.Column(db.Integer, db.ForeignKey("registration_users.id"), nullable=False)
     flat_id = db.Column(db.Integer, db.ForeignKey("flats.id"), nullable=False)
+    tower_id = db.Column(db.Integer, db.ForeignKey("towers.id"), nullable=True)
+    building_id = db.Column(db.Integer, db.ForeignKey("buildings.id"), nullable=True)
     status = db.Column(
         db.Enum("PENDING", "APPROVED", "DECLINED", name="booking_status"),
         nullable=False,
         default="PENDING",
     )
+    security_deposit = db.Column(db.Numeric(10, 2), nullable=True)
+    paid = db.Column(db.Boolean, default=False, nullable=False)
+    building_full_address = db.Column(db.String(255), nullable=True)
+    user_name = db.Column(db.String(120), nullable=True)
     created_at = db.Column(db.DateTime, default=datetime.utcnow, nullable=False)

@@ -1,11 +1,17 @@
 from flask_jwt_extended import create_access_token
 from uuid import uuid4
 from extensions import db
-from users.models_users import RegistrationUser, UserProfile
+import cloudinary
+import cloudinary.uploader
+import os
+from users.models_users import RegistrationUser, UserProfile, RevokedToken
+from admins.models_admins import Building, Tower, Flat, Booking
+from sqlalchemy.orm import selectinload
 from users.schemas_users import (
     validate_registration_payload,
     validate_login_payload,
     validate_update_payload,
+    validate_update_profile_payload,
     serialize_registration_response,
     serialize_login_response,
     serialize_me_response,
@@ -14,6 +20,14 @@ from users.schemas_users import (
     serialize_user_profile,
     serialize_users_health,
     serialize_logout_response,
+    serialize_building_with_stats,
+    serialize_building_detail,
+    serialize_tower_detail_with_building,
+    serialize_flat_summary,
+    serialize_flats_response,
+    serialize_flat_detail,
+    serialize_tower_summary,
+    serialize_booking,
 )
 
 
@@ -89,6 +103,53 @@ def get_user_profile_details(identity):
     return user, profile
 
 
+def update_user_profile(identity, payload):
+    user = _get_user_by_identity(identity)
+    if not user:
+        return None, None, None
+
+    profile = UserProfile.query.filter_by(user_id=user.id).first()
+    if not profile:
+        profile = UserProfile(user_id=user.id, primary_email=user.email)
+        db.session.add(profile)
+
+    if "username" in payload:
+        username = payload.get("username")
+        if username:
+            with db.session.no_autoflush:
+                existing = UserProfile.query.filter(
+                    UserProfile.username == username,
+                    UserProfile.user_id != user.id,
+                ).first()
+            if existing:
+                return user, profile, _error(409, "Conflict", "Username already taken.")
+        profile.username = username
+
+    if "mobile_number" in payload:
+        profile.mobile_number = payload.get("mobile_number")
+    if "profile_pic_url" in payload:
+        profile.profile_pic_url = payload.get("profile_pic_url")
+    if "profile_pic_public_id" in payload:
+        profile.profile_pic_public_id = payload.get("profile_pic_public_id")
+    if "profile_pic_folder" in payload:
+        profile.profile_pic_folder = payload.get("profile_pic_folder") or UserProfile.PROFILE_PIC_FOLDER
+    if "bio" in payload:
+        profile.bio = payload.get("bio")
+    if "date_of_birth" in payload:
+        profile.date_of_birth = payload.get("date_of_birth")
+    if "city" in payload:
+        profile.city = payload.get("city")
+    if "state" in payload:
+        profile.state = payload.get("state")
+    if "country" in payload:
+        profile.country = payload.get("country")
+
+    profile.primary_email = user.email
+
+    db.session.commit()
+    return user, profile, None
+
+
 def update_user(identity, payload):
     user = _get_user_by_identity(identity)
     if not user:
@@ -116,6 +177,7 @@ def delete_user(identity):
 # High-level handlers for routes
 
 def users_health_service():
+    # Service: Return static health payload for the users module.
     return {
         "status_code": 200,
         "message": "Users service healthy",
@@ -124,6 +186,7 @@ def users_health_service():
 
 
 def register_user_service(payload):
+    # Service: Validate and register a new user account.
     payload, errors = validate_registration_payload(payload)
     if errors:
         return None, _error(400, "Validation Error", " ".join(errors))
@@ -144,6 +207,7 @@ def register_user_service(payload):
 
 
 def login_user_service(payload):
+    # Service: Validate login and issue a JWT for the user.
     payload, errors = validate_login_payload(payload)
     if errors:
         return None, _error(400, "Validation Error", " ".join(errors))
@@ -160,6 +224,7 @@ def login_user_service(payload):
 
 
 def me_service(identity):
+    # Service: Fetch basic profile data for the logged-in user.
     user, role = get_user_profile(identity)
     if not user:
         return None, _error(401, "Unauthorized", "Invalid token.")
@@ -172,6 +237,7 @@ def me_service(identity):
 
 
 def profile_service(identity):
+    # Service: Fetch full user profile details for the logged-in user.
     user, profile = get_user_profile_details(identity)
     if not user:
         return None, _error(401, "Unauthorized", "Invalid token.")
@@ -184,6 +250,7 @@ def profile_service(identity):
 
 
 def update_me_service(identity, payload):
+    # Service: Update logged-in user's account fields (email/password).
     payload, errors = validate_update_payload(payload)
     if errors:
         return None, _error(400, "Validation Error", " ".join(errors))
@@ -199,7 +266,107 @@ def update_me_service(identity, payload):
     }, None
 
 
+def update_profile_service(identity, payload):
+    payload, errors = validate_update_profile_payload(payload)
+    if errors:
+        return None, _error(400, "Validation Error", " ".join(errors))
+
+    user, profile, err = update_user_profile(identity, payload)
+    if err:
+        return None, err
+    if not user:
+        return None, _error(401, "Unauthorized", "Invalid token.")
+
+    return {
+        "status_code": 200,
+        "message": "User profile updated",
+        "data": serialize_user_profile(user, profile),
+    }, None
+
+
+def upload_profile_picture_service(identity, file, folder):
+    if not file:
+        return None, _error(400, "Validation Error", "Profile picture file is required.")
+
+    if not (os.getenv("CLOUDINARY_URL") or cloudinary.config().cloud_name):
+        return None, _error(500, "Configuration Error", "Cloudinary is not configured.")
+
+    user = _get_user_by_identity(identity)
+    if not user:
+        return None, _error(401, "Unauthorized", "Invalid token.")
+
+    profile = UserProfile.query.filter_by(user_id=user.id).first()
+    if not profile:
+        profile = UserProfile(user_id=user.id, primary_email=user.email)
+        db.session.add(profile)
+
+    target_folder = folder or profile.profile_pic_folder or UserProfile.PROFILE_PIC_FOLDER
+    old_public_id = profile.profile_pic_public_id
+
+    try:
+        upload_result = cloudinary.uploader.upload(
+            file,
+            folder=target_folder,
+            resource_type="image",
+        )
+    except Exception:
+        return None, _error(502, "Upload Error", "Failed to upload profile picture.")
+
+    profile.profile_pic_url = upload_result.get("secure_url") or upload_result.get("url")
+    profile.profile_pic_public_id = upload_result.get("public_id")
+    profile.profile_pic_folder = target_folder
+    profile.primary_email = user.email
+
+    db.session.commit()
+
+    if old_public_id and old_public_id != profile.profile_pic_public_id:
+        try:
+            cloudinary.uploader.destroy(old_public_id, resource_type="image")
+        except Exception:
+            pass
+
+    return {
+        "status_code": 200,
+        "message": "Profile picture uploaded",
+        "data": serialize_user_profile(user, profile),
+    }, None
+
+
+def remove_profile_picture_service(identity):
+    user = _get_user_by_identity(identity)
+    if not user:
+        return None, _error(401, "Unauthorized", "Invalid token.")
+
+    profile = UserProfile.query.filter_by(user_id=user.id).first()
+    if not profile or not profile.profile_pic_public_id:
+        return {
+            "status_code": 200,
+            "message": "Profile picture removed",
+            "data": serialize_user_profile(user, profile),
+        }, None
+
+    old_public_id = profile.profile_pic_public_id
+    profile.profile_pic_url = None
+    profile.profile_pic_public_id = None
+    profile.profile_pic_folder = UserProfile.PROFILE_PIC_FOLDER
+    profile.primary_email = user.email
+
+    db.session.commit()
+
+    try:
+        cloudinary.uploader.destroy(old_public_id, resource_type="image")
+    except Exception:
+        pass
+
+    return {
+        "status_code": 200,
+        "message": "Profile picture removed",
+        "data": serialize_user_profile(user, profile),
+    }, None
+
+
 def delete_me_service(identity):
+    # Service: Delete the logged-in user's account.
     user = delete_user(identity)
     if not user:
         return None, _error(401, "Unauthorized", "Invalid token.")
@@ -211,9 +378,280 @@ def delete_me_service(identity):
     }, None
 
 
-def logout_service():
+def logout_service(identity, jwt_payload):
+    # Service: Revoke the current JWT so it cannot be used again.
+    user = _get_user_by_identity(identity)
+    if not user:
+        return None, _error(401, "Unauthorized", "Invalid token.")
+
+    jti = (jwt_payload or {}).get("jti")
+    if not jti:
+        return None, _error(401, "Unauthorized", "Invalid token.")
+
+    existing = RevokedToken.query.filter_by(jti=jti).first()
+    if not existing:
+        db.session.add(RevokedToken(jti=jti, user_id=user.id))
+        db.session.commit()
+
     return {
         "status_code": 200,
         "message": "Logout successful",
         "data": serialize_logout_response(),
+    }, None
+
+
+def list_buildings_service():
+    # Service: List all buildings with tower/flat counts and amenities.
+    buildings = (
+        Building.query.options(
+            selectinload(Building.towers).selectinload(Tower.flats),
+            selectinload(Building.amenities),
+        )
+        .order_by(Building.id.desc())
+        .all()
+    )
+
+    return {
+        "status_code": 200,
+        "message": "Buildings fetched",
+        "data": [serialize_building_with_stats(building) for building in buildings],
+    }, None
+
+
+def get_building_detail_service(building_id):
+    # Service: Fetch a single building with towers and amenities.
+    building = (
+        Building.query.options(
+            selectinload(Building.towers).selectinload(Tower.flats),
+            selectinload(Building.amenities),
+        )
+        .filter_by(id=building_id)
+        .first()
+    )
+    if not building:
+        return None, _error(404, "Not Found", "Building not found.")
+
+    return {
+        "status_code": 200,
+        "message": "Building fetched",
+        "data": serialize_building_detail(building),
+    }, None
+
+
+def get_tower_detail_service(building_id, tower_id):
+    # Service: Fetch a tower by building with flat counts and building address.
+    building = (
+        Building.query.options(
+            selectinload(Building.towers).selectinload(Tower.flats),
+        )
+        .filter_by(id=building_id)
+        .first()
+    )
+    if not building:
+        return None, _error(404, "Not Found", "Building not found.")
+
+    tower = next((t for t in (building.towers or []) if t.id == tower_id), None)
+    if not tower:
+        return None, _error(404, "Not Found", "Tower not found for this building.")
+
+    return {
+        "status_code": 200,
+        "message": "Tower fetched",
+        "data": serialize_tower_detail_with_building(tower, building),
+    }, None
+
+
+def list_tower_flats_service(building_id, tower_id, status, page):
+    # Service: List flats for a tower with status filter and pagination.
+    try:
+        page = int(page or 1)
+    except (TypeError, ValueError):
+        return None, _error(400, "Validation Error", "page must be an integer.")
+
+    if page < 1:
+        return None, _error(400, "Validation Error", "page must be >= 1.")
+
+    if status not in (None, "", "all", "available", "true", "false"):
+        return None, _error(400, "Validation Error", "status must be 'all', 'available', 'true', or 'false'.")
+
+    building = Building.query.filter_by(id=building_id).first()
+    if not building:
+        return None, _error(404, "Not Found", "Building not found.")
+
+    tower = Tower.query.filter_by(id=tower_id, building_id=building_id).first()
+    if not tower:
+        return None, _error(404, "Not Found", "Tower not found for this building.")
+
+    per_page = 10
+    query = Flat.query.filter_by(tower_id=tower_id)
+    if status in ("available", "true"):
+        query = query.filter_by(is_available=True)
+    elif status == "false":
+        query = query.filter_by(is_available=False)
+
+    total = query.count()
+    total_pages = (total + per_page - 1) // per_page
+    items = (
+        query.order_by(Flat.id.desc())
+        .offset((page - 1) * per_page)
+        .limit(per_page)
+        .all()
+    )
+
+    return {
+        "status_code": 200,
+        "message": "Flats fetched",
+        "data": serialize_flats_response(items, tower, building, page, per_page, total, total_pages),
+    }, None
+
+
+def get_flat_detail_service(building_id, tower_id, flat_id):
+    # Service: Fetch a single flat with tower, building, and amenities info.
+    building = Building.query.filter_by(id=building_id).first()
+    if not building:
+        return None, _error(404, "Not Found", "Building not found.")
+
+    tower = Tower.query.filter_by(id=tower_id, building_id=building_id).first()
+    if not tower:
+        return None, _error(404, "Not Found", "Tower not found for this building.")
+
+    flat = Flat.query.filter_by(id=flat_id, tower_id=tower_id).first()
+    if not flat:
+        return None, _error(404, "Not Found", "Flat not found for this tower.")
+
+    return {
+        "status_code": 200,
+        "message": "Flat fetched",
+        "data": serialize_flat_detail(flat, tower, building),
+    }, None
+
+
+def list_building_towers_service(building_id):
+    # Service: List towers for a building with flat counts.
+    building = (
+        Building.query.options(
+            selectinload(Building.towers).selectinload(Tower.flats),
+        )
+        .filter_by(id=building_id)
+        .first()
+    )
+    if not building:
+        return None, _error(404, "Not Found", "Building not found.")
+
+    towers = building.towers or []
+    return {
+        "status_code": 200,
+        "message": "Towers fetched",
+        "data": [serialize_tower_summary(tower) for tower in towers],
+    }, None
+
+
+def create_security_deposit_booking_service(identity, flat_id):
+    # Service: Create a booking by paying security deposit for a flat.
+    user = _get_user_by_identity(identity)
+    if not user:
+        return None, _error(401, "Unauthorized", "Invalid token.")
+
+    flat = Flat.query.get(flat_id)
+    if not flat:
+        return None, _error(404, "Not Found", "Flat not found.")
+
+    tower = Tower.query.get(flat.tower_id) if flat.tower_id else None
+    building = Building.query.get(tower.building_id) if tower else None
+    if not tower or not building:
+        return None, _error(404, "Not Found", "Building or tower not found for this flat.")
+
+    profile = UserProfile.query.filter_by(user_id=user.id).first()
+    user_name = profile.username if profile and profile.username else None
+
+    full_address = ", ".join(
+        part for part in [building.address, building.city, building.state, building.pincode] if part
+    )
+
+    booking = Booking(
+        user_id=user.id,
+        flat_id=flat.id,
+        tower_id=tower.id,
+        building_id=building.id,
+        status="PENDING",
+        security_deposit=flat.security_deposit,
+        paid=True,
+        building_full_address=full_address,
+        user_name=user_name,
+    )
+
+    db.session.add(booking)
+    db.session.commit()
+
+    return {
+        "status_code": 201,
+        "message": "Security deposit paid and booking created",
+        "data": serialize_booking(booking),
+    }, None
+
+
+def list_user_bookings_service(identity):
+    # Service: List all bookings for the logged-in user.
+    user = _get_user_by_identity(identity)
+    if not user:
+        return None, _error(401, "Unauthorized", "Invalid token.")
+
+    rows = (
+        db.session.query(Booking, Building, Tower, Flat)
+        .join(Building, Booking.building_id == Building.id)
+        .join(Tower, Booking.tower_id == Tower.id)
+        .join(Flat, Booking.flat_id == Flat.id)
+        .filter(Booking.user_id == user.id)
+        .order_by(Booking.id.desc())
+        .all()
+    )
+
+    data = []
+    for booking, building, tower, flat in rows:
+        data.append(
+            {
+                **serialize_booking(booking),
+                "building": {"id": building.id, "name": building.name},
+                "tower": {"id": tower.id, "name": tower.name},
+                "flat": {"id": flat.id, "flat_number": flat.flat_number},
+            }
+        )
+
+    return {
+        "status_code": 200,
+        "message": "Bookings fetched",
+        "data": data,
+    }, None
+
+
+def get_user_booking_service(identity, booking_id):
+    # Service: Fetch a single booking for the logged-in user.
+    user = _get_user_by_identity(identity)
+    if not user:
+        return None, _error(401, "Unauthorized", "Invalid token.")
+
+    row = (
+        db.session.query(Booking, Building, Tower, Flat)
+        .join(Building, Booking.building_id == Building.id)
+        .join(Tower, Booking.tower_id == Tower.id)
+        .join(Flat, Booking.flat_id == Flat.id)
+        .filter(Booking.user_id == user.id, Booking.id == booking_id)
+        .first()
+    )
+
+    if not row:
+        return None, _error(404, "Not Found", "Booking not found.")
+
+    booking, building, tower, flat = row
+    data = {
+        **serialize_booking(booking),
+        "building": {"id": building.id, "name": building.name},
+        "tower": {"id": tower.id, "name": tower.name},
+        "flat": {"id": flat.id, "flat_number": flat.flat_number},
+    }
+
+    return {
+        "status_code": 200,
+        "message": "Booking fetched",
+        "data": data,
     }, None

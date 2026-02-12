@@ -15,6 +15,7 @@ def register_error_handlers(app):
 
     @app.errorhandler(Exception)
     def handle_unexpected_exception(err):
+        app.logger.exception("Unhandled exception", exc_info=err)
         return error_response(
             status_code=HTTPStatus.INTERNAL_SERVER_ERROR,
             message="Internal Server Error",

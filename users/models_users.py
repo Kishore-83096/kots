@@ -58,3 +58,12 @@ class UserProfile(db.Model):
     def set_primary_email_from_user(self):
         if self.user:
             self.primary_email = self.user.email
+
+
+class RevokedToken(db.Model):
+    __tablename__ = "revoked_tokens"
+
+    id = db.Column(db.Integer, primary_key=True)
+    jti = db.Column(db.String(255), unique=True, nullable=False, index=True)
+    user_id = db.Column(db.Integer, db.ForeignKey("registration_users.id"), nullable=True)
+    revoked_at = db.Column(db.DateTime, default=datetime.utcnow, nullable=False)

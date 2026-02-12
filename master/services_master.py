@@ -6,6 +6,7 @@ from master.schemas_master import (
     serialize_master_health,
     serialize_master_control,
     serialize_admin_created,
+    serialize_admin_detail,
     serialize_admins_list,
 )
 
@@ -63,6 +64,10 @@ def list_admins(exclude_user_id, page, per_page):
     }
 
 
+def get_single_admin(admin_id):
+    return RegistrationUser.query.filter_by(id=admin_id, is_admin=True).first()
+
+
 # High-level handlers for routes
 
 def master_health_service():
@@ -111,4 +116,16 @@ def master_list_admins_service(args, identity):
         "status_code": 200,
         "message": "Admins fetched",
         "data": serialize_admins_list(data),
+    }, None
+
+
+def master_get_single_admin_service(admin_id):
+    user = get_single_admin(admin_id)
+    if not user:
+        return None, _error(404, "Not Found", "Admin not found.")
+
+    return {
+        "status_code": 200,
+        "message": "Admin fetched",
+        "data": serialize_admin_detail(user),
     }, None
