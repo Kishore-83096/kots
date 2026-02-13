@@ -193,6 +193,7 @@ def serialize_flat(flat):
         "picture_url": flat.picture_url,
         "picture_public_id": flat.picture_public_id,
         "picture_folder": flat.picture_folder,
+        "amenity_ids": [amenity.id for amenity in flat.amenities] if hasattr(flat, "amenities") else [],
         "created_at": flat.created_at.isoformat(),
     }
 
@@ -245,6 +246,32 @@ def validate_amenity_create_payload(payload):
         "name": str(name).strip(),
         "description": str(description).strip() if description is not None else None,
     }, None
+
+
+def validate_amenity_update_payload(payload):
+    errors = []
+    payload = payload or {}
+
+    allowed_fields = {"name", "description"}
+
+    data = {}
+    for key in allowed_fields:
+        if key in payload:
+            value = payload.get(key)
+            if isinstance(value, str):
+                value = value.strip()
+            data[key] = value
+
+    if not data:
+        errors.append("At least one field is required.")
+
+    if "name" in data and not data.get("name"):
+        errors.append("Name cannot be empty.")
+
+    if errors:
+        return None, errors
+
+    return data, None
 
 
 def serialize_amenity(amenity):

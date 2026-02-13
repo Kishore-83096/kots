@@ -16,11 +16,13 @@ from admins.services_admins import (
     get_building_service,
     create_flat_service,
     update_flat_service,
+    update_tower_flat_service,
     list_tower_flats_service,
     get_flat_service,
     delete_tower_service,
     delete_flat_service,
     create_amenity_service,
+    update_amenity_service,
     list_building_amenities_service,
     set_flat_amenities_service,
     delete_amenity_service,
@@ -162,6 +164,23 @@ def update_flat(flat_id):
     return success_response(status_code=result["status_code"], message=result["message"], data=result["data"], add_size=True)
 
 
+@admins_bp.route("/towers/<int:tower_id>/flats/<int:flat_id>", methods=["PUT"])
+@role_required("admin", "master")
+def update_tower_flat(tower_id, flat_id):
+    payload = request.form.to_dict() if request.form else request.get_json(silent=True)
+    result, err = update_tower_flat_service(
+        get_jwt_identity(),
+        tower_id,
+        flat_id,
+        payload,
+        request.files.get("file"),
+        request.form.get("folder"),
+    )
+    if err:
+        return error_response(**err, add_size=True)
+    return success_response(status_code=result["status_code"], message=result["message"], data=result["data"], add_size=True)
+
+
 @admins_bp.route("/towers/<int:tower_id>/flats", methods=["GET"])
 @role_required("admin", "master")
 def list_tower_flats(tower_id):
@@ -218,6 +237,22 @@ def create_amenity(building_id):
 @role_required("admin", "master")
 def list_building_amenities(building_id):
     result, err = list_building_amenities_service(get_jwt_identity(), building_id)
+    if err:
+        return error_response(**err, add_size=True)
+    return success_response(status_code=result["status_code"], message=result["message"], data=result["data"], add_size=True)
+
+
+@admins_bp.route("/amenities/<int:amenity_id>", methods=["PUT"])
+@role_required("admin", "master")
+def update_amenity(amenity_id):
+    payload = request.form.to_dict() if request.form else request.get_json(silent=True)
+    result, err = update_amenity_service(
+        get_jwt_identity(),
+        amenity_id,
+        payload,
+        request.files.get("file"),
+        request.form.get("folder"),
+    )
     if err:
         return error_response(**err, add_size=True)
     return success_response(status_code=result["status_code"], message=result["message"], data=result["data"], add_size=True)

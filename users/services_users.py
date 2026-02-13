@@ -5,13 +5,15 @@ import cloudinary
 import cloudinary.uploader
 import os
 from users.models_users import RegistrationUser, UserProfile, RevokedToken
-from admins.models_admins import Building, Tower, Flat, Booking
+from admins.models_admins import Building, Tower, Flat, Booking, Amenity
 from sqlalchemy.orm import selectinload
 from users.schemas_users import (
     validate_registration_payload,
     validate_login_payload,
     validate_update_payload,
     validate_update_profile_payload,
+    validate_flat_search_params,
+    validate_building_search_params,
     serialize_registration_response,
     serialize_login_response,
     serialize_me_response,
@@ -22,9 +24,12 @@ from users.schemas_users import (
     serialize_logout_response,
     serialize_building_with_stats,
     serialize_building_detail,
+    serialize_amenity_summary,
     serialize_tower_detail_with_building,
     serialize_flat_summary,
     serialize_flats_response,
+    serialize_flat_search_response,
+    serialize_building_search_response,
     serialize_flat_detail,
     serialize_tower_summary,
     serialize_booking,
@@ -37,6 +42,19 @@ def _error(status_code, message, user_message):
         "status_code": status_code,
         "message": message,
         "user_message": user_message,
+    }
+
+def _serialize_manager(admin_user, admin_profile):
+    name = None
+    phone = None
+    if admin_profile:
+        name = admin_profile.username or None
+        phone = admin_profile.mobile_number or None
+    if not name and admin_user:
+        name = admin_user.email
+    return {
+        "name": name,
+        "phone": phone,
     }
 
 
@@ -438,6 +456,48 @@ def get_building_detail_service(building_id):
     }, None
 
 
+def get_building_amenities_service(building_id):
+    # Service: Fetch all amenities for a single building.
+    building = (
+        Building.query.options(
+            selectinload(Building.amenities),
+        )
+        .filter_by(id=building_id)
+        .first()
+    )
+    if not building:
+        return None, _error(404, "Not Found", "Building not found.")
+
+    return {
+        "status_code": 200,
+        "message": "Building amenities fetched",
+        "data": {
+            "building": {"id": building.id, "name": building.name},
+            "amenities": [serialize_amenity_summary(amenity) for amenity in (building.amenities or [])],
+        },
+    }, None
+
+
+def get_building_amenity_service(building_id, amenity_id):
+    # Service: Fetch a single amenity for a building.
+    building = Building.query.filter_by(id=building_id).first()
+    if not building:
+        return None, _error(404, "Not Found", "Building not found.")
+
+    amenity = Amenity.query.filter_by(id=amenity_id, building_id=building_id).first()
+    if not amenity:
+        return None, _error(404, "Not Found", "Amenity not found for this building.")
+
+    return {
+        "status_code": 200,
+        "message": "Building amenity fetched",
+        "data": {
+            "building": {"id": building.id, "name": building.name},
+            "amenity": serialize_amenity_summary(amenity),
+        },
+    }, None
+
+
 def get_tower_detail_service(building_id, tower_id):
     # Service: Fetch a tower by building with flat counts and building address.
     building = (
@@ -505,6 +565,93 @@ def list_tower_flats_service(building_id, tower_id, status, page):
     }, None
 
 
+def search_flats_service(args):
+    # Service: Search flats across buildings by address, city, state, flat type, and rent range.
+    params, errors = validate_flat_search_params(args)
+    if errors:
+        return None, _error(400, "Validation Error", " ".join(errors))
+
+    page = params["page"]
+    per_page = params["per_page"]
+
+    query = (
+        db.session.query(Flat, Tower, Building)
+        .join(Tower, Flat.tower_id == Tower.id)
+        .join(Building, Tower.building_id == Building.id)
+    )
+
+    if params["available_only"]:
+        query = query.filter(Flat.is_available.is_(True))
+
+    if params["address"]:
+        query = query.filter(Building.address.ilike(f"%{params['address']}%"))
+    if params["city"]:
+        query = query.filter(Building.city.ilike(f"%{params['city']}%"))
+    if params["state"]:
+        query = query.filter(Building.state.ilike(f"%{params['state']}%"))
+    if params["flat_type"]:
+        query = query.filter(Flat.bhk_type.ilike(f"%{params['flat_type']}%"))
+    if params["min_rent"] is not None:
+        query = query.filter(Flat.rent_amount >= params["min_rent"])
+    if params["max_rent"] is not None:
+        query = query.filter(Flat.rent_amount <= params["max_rent"])
+
+    total = query.count()
+    total_pages = (total + per_page - 1) // per_page
+    rows = (
+        query.order_by(Flat.id.desc())
+        .offset((page - 1) * per_page)
+        .limit(per_page)
+        .all()
+    )
+
+    return {
+        "status_code": 200,
+        "message": "Flat search results fetched",
+        "data": serialize_flat_search_response(rows, page, per_page, total, total_pages),
+    }, None
+
+
+def search_buildings_service(args):
+    # Service: Search buildings by name/address/city/state with pagination.
+    params, errors = validate_building_search_params(args)
+    if errors:
+        return None, _error(400, "Validation Error", " ".join(errors))
+
+    page = params["page"]
+    per_page = params["per_page"]
+
+    base_query = Building.query
+    if params["name"]:
+        base_query = base_query.filter(Building.name.ilike(f"%{params['name']}%"))
+    if params["address"]:
+        base_query = base_query.filter(Building.address.ilike(f"%{params['address']}%"))
+    if params["city"]:
+        base_query = base_query.filter(Building.city.ilike(f"%{params['city']}%"))
+    if params["state"]:
+        base_query = base_query.filter(Building.state.ilike(f"%{params['state']}%"))
+
+    total = base_query.count()
+    total_pages = (total + per_page - 1) // per_page
+
+    buildings = (
+        base_query.options(
+            selectinload(Building.towers).selectinload(Tower.flats),
+            selectinload(Building.amenities),
+        )
+        .order_by(Building.id.desc())
+        .offset((page - 1) * per_page)
+        .limit(per_page)
+        .all()
+    )
+
+    return {
+        "status_code": 200,
+        "message": "Building search results fetched",
+        "data": serialize_building_search_response(buildings, page, per_page, total, total_pages),
+    }, None
+
+
 def get_flat_detail_service(building_id, tower_id, flat_id):
     # Service: Fetch a single flat with tower, building, and amenities info.
     building = Building.query.filter_by(id=building_id).first()
@@ -561,6 +708,10 @@ def create_security_deposit_booking_service(identity, flat_id):
     if not tower or not building:
         return None, _error(404, "Not Found", "Building or tower not found for this flat.")
 
+    existing_booking = Booking.query.filter_by(user_id=user.id, flat_id=flat.id).first()
+    if existing_booking:
+        return None, _error(409, "Conflict", "You have already booked this flat.")
+
     profile = UserProfile.query.filter_by(user_id=user.id).first()
     user_name = profile.username if profile and profile.username else None
 
@@ -597,23 +748,26 @@ def list_user_bookings_service(identity):
         return None, _error(401, "Unauthorized", "Invalid token.")
 
     rows = (
-        db.session.query(Booking, Building, Tower, Flat)
+        db.session.query(Booking, Building, Tower, Flat, RegistrationUser, UserProfile)
         .join(Building, Booking.building_id == Building.id)
         .join(Tower, Booking.tower_id == Tower.id)
         .join(Flat, Booking.flat_id == Flat.id)
+        .join(RegistrationUser, Building.admin_id == RegistrationUser.id)
+        .outerjoin(UserProfile, UserProfile.user_id == RegistrationUser.id)
         .filter(Booking.user_id == user.id)
         .order_by(Booking.id.desc())
         .all()
     )
 
     data = []
-    for booking, building, tower, flat in rows:
+    for booking, building, tower, flat, manager_user, manager_profile in rows:
         data.append(
             {
                 **serialize_booking(booking),
                 "building": {"id": building.id, "name": building.name},
                 "tower": {"id": tower.id, "name": tower.name},
                 "flat": {"id": flat.id, "flat_number": flat.flat_number},
+                "manager": _serialize_manager(manager_user, manager_profile),
             }
         )
 
@@ -631,10 +785,12 @@ def get_user_booking_service(identity, booking_id):
         return None, _error(401, "Unauthorized", "Invalid token.")
 
     row = (
-        db.session.query(Booking, Building, Tower, Flat)
+        db.session.query(Booking, Building, Tower, Flat, RegistrationUser, UserProfile)
         .join(Building, Booking.building_id == Building.id)
         .join(Tower, Booking.tower_id == Tower.id)
         .join(Flat, Booking.flat_id == Flat.id)
+        .join(RegistrationUser, Building.admin_id == RegistrationUser.id)
+        .outerjoin(UserProfile, UserProfile.user_id == RegistrationUser.id)
         .filter(Booking.user_id == user.id, Booking.id == booking_id)
         .first()
     )
@@ -642,12 +798,13 @@ def get_user_booking_service(identity, booking_id):
     if not row:
         return None, _error(404, "Not Found", "Booking not found.")
 
-    booking, building, tower, flat = row
+    booking, building, tower, flat, manager_user, manager_profile = row
     data = {
         **serialize_booking(booking),
         "building": {"id": building.id, "name": building.name},
         "tower": {"id": tower.id, "name": tower.name},
         "flat": {"id": flat.id, "flat_number": flat.flat_number},
+        "manager": _serialize_manager(manager_user, manager_profile),
     }
 
     return {

@@ -15,8 +15,12 @@ from users.services_users import (
     logout_service,
     list_buildings_service,
     get_building_detail_service,
+    get_building_amenities_service,
+    get_building_amenity_service,
     get_tower_detail_service,
     list_tower_flats_service,
+    search_flats_service,
+    search_buildings_service,
     get_flat_detail_service,
     list_building_towers_service,
     create_security_deposit_booking_service,
@@ -143,6 +147,24 @@ def get_building_detail(building_id):
     return success_response(status_code=result["status_code"], message=result["message"], data=result["data"], add_size=True)
 
 
+@users_bp.route("/buildings/<int:building_id>/amenities", methods=["GET"])
+@jwt_required()
+def get_building_amenities(building_id):
+    result, err = get_building_amenities_service(building_id)
+    if err:
+        return error_response(**err, add_size=True)
+    return success_response(status_code=result["status_code"], message=result["message"], data=result["data"], add_size=True)
+
+
+@users_bp.route("/buildings/<int:building_id>/amenities/<int:amenity_id>", methods=["GET"])
+@jwt_required()
+def get_building_amenity(building_id, amenity_id):
+    result, err = get_building_amenity_service(building_id, amenity_id)
+    if err:
+        return error_response(**err, add_size=True)
+    return success_response(status_code=result["status_code"], message=result["message"], data=result["data"], add_size=True)
+
+
 @users_bp.route("/buildings/<int:building_id>/towers/<int:tower_id>", methods=["GET"])
 @jwt_required()
 def get_tower_detail(building_id, tower_id):
@@ -161,6 +183,24 @@ def list_tower_flats(building_id, tower_id):
         request.args.get("status"),
         request.args.get("page"),
     )
+    if err:
+        return error_response(**err, add_size=True)
+    return success_response(status_code=result["status_code"], message=result["message"], data=result["data"], add_size=True)
+
+
+@users_bp.route("/flats/search", methods=["GET"])
+@jwt_required()
+def search_flats():
+    result, err = search_flats_service(request.args)
+    if err:
+        return error_response(**err, add_size=True)
+    return success_response(status_code=result["status_code"], message=result["message"], data=result["data"], add_size=True)
+
+
+@users_bp.route("/buildings/search", methods=["GET"])
+@jwt_required()
+def search_buildings():
+    result, err = search_buildings_service(request.args)
     if err:
         return error_response(**err, add_size=True)
     return success_response(status_code=result["status_code"], message=result["message"], data=result["data"], add_size=True)

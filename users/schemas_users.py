@@ -1,4 +1,5 @@
 from datetime import datetime
+from decimal import Decimal, InvalidOperation
 from users.models_users import UserProfile
 
 
@@ -114,6 +115,124 @@ def validate_update_profile_payload(payload):
         return None, errors
 
     return data, None
+
+
+def _parse_bool(value, default=True):
+    if value is None:
+        return default
+    if isinstance(value, bool):
+        return value
+    if isinstance(value, str):
+        normalized = value.strip().lower()
+        if normalized in ("true", "1", "yes", "y"):
+            return True
+        if normalized in ("false", "0", "no", "n"):
+            return False
+    return None
+
+
+def validate_flat_search_params(args):
+    errors = []
+
+    address = (args.get("address") or "").strip() or None
+    city = (args.get("city") or "").strip() or None
+    state = (args.get("state") or "").strip() or None
+    flat_type = (args.get("flat_type") or "").strip() or None
+
+    try:
+        page = int(args.get("page", 1))
+    except (TypeError, ValueError):
+        return None, ["page must be an integer."]
+
+    try:
+        per_page = int(args.get("per_page", 10))
+    except (TypeError, ValueError):
+        return None, ["per_page must be an integer."]
+
+    available_only = _parse_bool(args.get("available_only"), default=True)
+    if available_only is None:
+        errors.append("available_only must be a boolean.")
+
+    min_rent = None
+    max_rent = None
+
+    min_rent_raw = args.get("min_rent")
+    max_rent_raw = args.get("max_rent")
+
+    if min_rent_raw not in (None, ""):
+        try:
+            min_rent = Decimal(str(min_rent_raw))
+        except (InvalidOperation, ValueError):
+            errors.append("min_rent must be a valid number.")
+
+    if max_rent_raw not in (None, ""):
+        try:
+            max_rent = Decimal(str(max_rent_raw))
+        except (InvalidOperation, ValueError):
+            errors.append("max_rent must be a valid number.")
+
+    if min_rent is not None and min_rent < 0:
+        errors.append("min_rent must be >= 0.")
+    if max_rent is not None and max_rent < 0:
+        errors.append("max_rent must be >= 0.")
+    if min_rent is not None and max_rent is not None and min_rent > max_rent:
+        errors.append("min_rent cannot be greater than max_rent.")
+
+    if page < 1:
+        errors.append("page must be >= 1.")
+    if per_page < 1 or per_page > 100:
+        errors.append("per_page must be between 1 and 100.")
+
+    if errors:
+        return None, errors
+
+    return {
+        "address": address,
+        "city": city,
+        "state": state,
+        "flat_type": flat_type,
+        "available_only": available_only,
+        "min_rent": min_rent,
+        "max_rent": max_rent,
+        "page": page,
+        "per_page": per_page,
+    }, None
+
+
+def validate_building_search_params(args):
+    errors = []
+
+    name = (args.get("name") or "").strip() or None
+    address = (args.get("address") or "").strip() or None
+    city = (args.get("city") or "").strip() or None
+    state = (args.get("state") or "").strip() or None
+
+    try:
+        page = int(args.get("page", 1))
+    except (TypeError, ValueError):
+        return None, ["page must be an integer."]
+
+    try:
+        per_page = int(args.get("per_page", 10))
+    except (TypeError, ValueError):
+        return None, ["per_page must be an integer."]
+
+    if page < 1:
+        errors.append("page must be >= 1.")
+    if per_page < 1 or per_page > 100:
+        errors.append("per_page must be between 1 and 100.")
+
+    if errors:
+        return None, errors
+
+    return {
+        "name": name,
+        "address": address,
+        "city": city,
+        "state": state,
+        "page": page,
+        "per_page": per_page,
+    }, None
 
 
 def serialize_users_health():
@@ -344,6 +463,51 @@ def serialize_flats_response(flats, tower, building, page, per_page, total, tota
             "name": tower.name,
         },
         "items": [serialize_flat_summary(flat) for flat in flats],
+        "page": page,
+        "per_page": per_page,
+        "total": total,
+        "total_pages": total_pages,
+    }
+
+
+def serialize_flat_search_response(rows, page, per_page, total, total_pages):
+    items = []
+    for flat, tower, building in rows:
+        items.append(
+            {
+                "flat": serialize_flat_summary(flat),
+                "tower": {
+                    "id": tower.id,
+                    "name": tower.name,
+                },
+                "building": {
+                    "id": building.id,
+                    "name": building.name,
+                    "address": building.address,
+                    "city": building.city,
+                    "state": building.state,
+                    "pincode": building.pincode,
+                    "full_address": ", ".join(
+                        part
+                        for part in [building.address, building.city, building.state, building.pincode]
+                        if part
+                    ),
+                },
+            }
+        )
+
+    return {
+        "items": items,
+        "page": page,
+        "per_page": per_page,
+        "total": total,
+        "total_pages": total_pages,
+    }
+
+
+def serialize_building_search_response(buildings, page, per_page, total, total_pages):
+    return {
+        "items": [serialize_building_with_stats(building) for building in buildings],
         "page": page,
         "per_page": per_page,
         "total": total,

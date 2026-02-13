@@ -30,7 +30,7 @@ class Tower(db.Model):
     ASSET_PIC_FOLDER = "kots/assets"
 
     id = db.Column(db.Integer, primary_key=True)
-    name = db.Column(db.String(10), nullable=False)
+    name = db.Column(db.String(50), nullable=False)
     floors = db.Column(db.Integer, nullable=False)
     total_flats = db.Column(db.Integer, nullable=False, default=0)
     building_id = db.Column(db.Integer, db.ForeignKey("buildings.id"), nullable=False)

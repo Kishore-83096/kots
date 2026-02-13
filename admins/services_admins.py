@@ -17,6 +17,7 @@ from admins.schemas_admins import (
     serialize_flat,
     validate_flat_update_payload,
     validate_amenity_create_payload,
+    validate_amenity_update_payload,
     serialize_amenity,
     serialize_booking_admin,
     validate_booking_status_payload,
@@ -446,6 +447,25 @@ def update_flat_service(admin_id, flat_id, payload, file, folder):
     }, None
 
 
+def update_tower_flat_service(admin_id, tower_id, flat_id, payload, file, folder):
+    # Service: Update a single flat under a specific tower owned by the admin.
+    admin_id, err = _require_admin_id(admin_id)
+    if err:
+        return None, err
+
+    flat = Flat.query.get(flat_id)
+    if not flat:
+        return None, _error(404, "Not Found", "Flat not found.")
+
+    if flat.tower_id != tower_id:
+        return None, _error(404, "Not Found", "Flat not found for this tower.")
+
+    if not flat.tower or not flat.tower.building or flat.tower.building.admin_id != admin_id:
+        return None, _error(403, "Forbidden", "You can only update flats for your own buildings.")
+
+    return update_flat_service(admin_id, flat_id, payload, file, folder)
+
+
 
 
 
@@ -579,6 +599,55 @@ def list_building_amenities_service(admin_id, building_id):
 
 
 # Replace a flat's amenities with a validated set from the same building, return updated amenity list or error
+def update_amenity_service(admin_id, amenity_id, payload, file, folder):
+    # Service: Update an amenity owned by the admin and optionally replace its image.
+    payload, errors = validate_amenity_update_payload(payload)
+    if errors:
+        return None, _error(400, "Validation Error", " ".join(errors))
+
+    admin_id, err = _require_admin_id(admin_id)
+    if err:
+        return None, err
+
+    amenity = Amenity.query.get(amenity_id)
+    if not amenity:
+        return None, _error(404, "Not Found", "Amenity not found.")
+
+    if not amenity.building or amenity.building.admin_id != admin_id:
+        return None, _error(403, "Forbidden", "You can only update amenities for your own buildings.")
+
+    if "name" in payload:
+        amenity.name = payload["name"]
+    if "description" in payload:
+        amenity.description = payload["description"]
+
+    old_public_id = amenity.picture_public_id
+    picture_url, public_id, target_folder, err = _upload_image(
+        file,
+        folder,
+        amenity.picture_folder or Amenity.ASSET_PIC_FOLDER,
+        "Failed to upload amenity picture.",
+    )
+    if err:
+        return None, err
+    if file:
+        amenity.picture_url = picture_url
+        amenity.picture_public_id = public_id
+        amenity.picture_folder = target_folder
+
+    db.session.commit()
+
+    _maybe_destroy_old_image(old_public_id, amenity.picture_public_id, bool(file))
+
+    return {
+        "status_code": 200,
+        "message": "Amenity updated",
+        "data": serialize_amenity(amenity),
+    }, None
+
+
+
+
 def set_flat_amenities_service(admin_id, flat_id, payload):
     # Service: Replace a flat's amenities with a validated set from the same building.
     payload = payload or {}

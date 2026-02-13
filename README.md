@@ -8,6 +8,16 @@ This project is a modular Flask REST API for a rental/property workflow with thr
 
 The application uses JWT-based auth, SQLAlchemy ORM, Alembic migrations, and optional Cloudinary image upload for profile and property assets.
 
+## Why This Application Is Used
+This application is used to manage the full rental discovery and booking flow for apartment communities (buildings/residencies, towers, and flats) in one system.
+
+It is built to solve three practical needs:
+- Users can quickly discover available flats by location, type, and rent range, then place bookings.
+- Admins can manage property inventory (buildings, towers, flats, amenities) and control booking approvals.
+- Master users can control platform-level operations by creating and supervising admin accounts.
+
+In short, it reduces manual coordination between tenants and property managers by providing a structured, role-based rental workflow with searchable inventory and trackable booking status.
+
 ## Directory Structure
 ```text
 flask/
@@ -79,6 +89,7 @@ Configured in `config.py` via `.env`:
 
 ## Authentication and Authorization
 - JWT tokens are issued on `/users/register` and `/users/login`.
+- Access token lifetime is configured to 5 hours.
 - Identity stored in token is user ID (string).
 - Role resolution is based on flags in `registration_users`:
   - `is_master -> master`
@@ -165,7 +176,7 @@ All endpoints return a common envelope from `common/response.py`:
 
 #### `POST /users/logout`
 - Auth: JWT required
-- Purpose: logical logout response only (no token blocklist in current code).
+- Purpose: revoke the current access token (`jti`) and return logout success.
 
 #### `GET /users/profile`
 - Auth: JWT required
@@ -200,6 +211,14 @@ All endpoints return a common envelope from `common/response.py`:
 - Auth: JWT required
 - Purpose: get building detail with towers and amenities.
 
+#### `GET /users/buildings/{building_id}/amenities`
+- Auth: JWT required
+- Purpose: list amenities for a building.
+
+#### `GET /users/buildings/{building_id}/amenities/{amenity_id}`
+- Auth: JWT required
+- Purpose: get a single amenity for a building.
+
 #### `GET /users/buildings/{building_id}/towers`
 - Auth: JWT required
 - Purpose: list towers for building.
@@ -215,6 +234,31 @@ All endpoints return a common envelope from `common/response.py`:
   - `page`: integer >= 1 (optional, default `1`)
 - Purpose: paginated flat listing (`per_page=10`).
 
+#### `GET /users/flats/search`
+- Auth: JWT required
+- Query:
+  - `address` (optional, partial match)
+  - `city` (optional, partial match)
+  - `state` (optional, partial match)
+  - `flat_type` (optional, partial match against `bhk_type`)
+  - `min_rent` (optional, numeric)
+  - `max_rent` (optional, numeric)
+  - `available_only` (optional, boolean, default `true`)
+  - `page` (optional, default `1`)
+  - `per_page` (optional, default `10`, max `100`)
+- Purpose: paginated search for flats across buildings by location and rent range.
+
+#### `GET /users/buildings/search`
+- Auth: JWT required
+- Query:
+  - `name` (optional, partial match)
+  - `address` (optional, partial match)
+  - `city` (optional, partial match)
+  - `state` (optional, partial match)
+  - `page` (optional, default `1`)
+  - `per_page` (optional, default `10`, max `100`)
+- Purpose: paginated search for buildings/residencies by name and location.
+
 #### `GET /users/buildings/{building_id}/towers/{tower_id}/flats/{flat_id}`
 - Auth: JWT required
 - Purpose: flat detail including building/tower context and amenities.
@@ -225,14 +269,16 @@ All endpoints return a common envelope from `common/response.py`:
 - Behavior:
   - booking starts with status `PENDING`
   - captures `building_full_address` and optional username snapshot
+- Errors:
+  - `409` if current user already booked the same flat
 
 #### `GET /users/bookings`
 - Auth: JWT required
-- Purpose: list all current user bookings with building/tower/flat summary.
+- Purpose: list all current user bookings with building/tower/flat summary and manager contact (`name`, `phone`).
 
 #### `GET /users/bookings/{booking_id}`
 - Auth: JWT required
-- Purpose: single booking detail for current user.
+- Purpose: single booking detail for current user, including manager contact (`name`, `phone`).
 
 ---
 
@@ -314,6 +360,11 @@ All admin routes except `/admins/health` require role `admin` or `master`.
 - Body: any flat updatable fields
 - Purpose: update flat and optionally replace image.
 
+#### `PUT /admins/towers/{tower_id}/flats/{flat_id}`
+- Auth: admin/master
+- Body: any flat updatable fields
+- Purpose: update a specific flat under a specific owned tower and optionally replace image.
+
 #### `GET /admins/towers/{tower_id}/flats`
 - Auth: admin/master
 - Purpose: list flats for owned tower.
@@ -336,6 +387,11 @@ All admin routes except `/admins/health` require role `admin` or `master`.
 #### `GET /admins/buildings/{building_id}/amenities`
 - Auth: admin/master
 - Purpose: list amenities for owned building.
+
+#### `PUT /admins/amenities/{amenity_id}`
+- Auth: admin/master
+- Body: JSON or multipart form, any of `name`, `description`, optional `file`, `folder`
+- Purpose: update owned amenity and optionally replace image.
 
 #### `PUT /admins/flats/{flat_id}/amenities`
 - Auth: admin/master
@@ -447,6 +503,7 @@ All master routes except `/master/health` require role `master`.
    - `status = PENDING`
    - `paid = true`
    - copied security deposit/address/user_name snapshot fields.
+   - duplicate booking for same `user_id + flat_id` is blocked with `409 Conflict`.
 3. Admin can read bookings and update status via `/admins/bookings/{booking_id}/status`.
 
 ## Important Notes
@@ -810,6 +867,46 @@ Response JSON:
 }
 ```
 
+#### `GET /users/buildings/{building_id}/amenities`
+Input JSON:
+```json
+{}
+```
+Response JSON:
+```json
+{
+  "status_code": 200,
+  "success": true,
+  "message": "Building amenities fetched",
+  "data": {
+    "building": {"id": 1, "name": "Green Residency"},
+    "amenities": [
+      {"id": 1, "name": "Gym", "description": "24x7", "picture_url": null}
+    ]
+  },
+  "size": "360b"
+}
+```
+
+#### `GET /users/buildings/{building_id}/amenities/{amenity_id}`
+Input JSON:
+```json
+{}
+```
+Response JSON:
+```json
+{
+  "status_code": 200,
+  "success": true,
+  "message": "Building amenity fetched",
+  "data": {
+    "building": {"id": 1, "name": "Green Residency"},
+    "amenity": {"id": 1, "name": "Gym", "description": "24x7", "picture_url": null}
+  },
+  "size": "320b"
+}
+```
+
 #### `GET /users/buildings/{building_id}/towers`
 Input JSON:
 ```json
@@ -912,6 +1009,108 @@ Response JSON:
 }
 ```
 
+#### `GET /users/flats/search`
+Input JSON:
+```json
+{
+  "address": "Madhapur",
+  "city": "Hyderabad",
+  "state": "Telangana",
+  "flat_type": "2BHK",
+  "min_rent": 15000,
+  "max_rent": 30000,
+  "available_only": true,
+  "page": 1,
+  "per_page": 10
+}
+```
+Response JSON:
+```json
+{
+  "status_code": 200,
+  "success": true,
+  "message": "Flat search results fetched",
+  "data": {
+    "items": [
+      {
+        "flat": {
+          "id": 101,
+          "tower_id": 10,
+          "flat_number": "A-101",
+          "floor_number": 1,
+          "bhk_type": "2BHK",
+          "area_sqft": 1200,
+          "rent_amount": "25000.00",
+          "security_deposit": "50000.00",
+          "is_available": true,
+          "picture_url": null
+        },
+        "tower": {"id": 10, "name": "A"},
+        "building": {
+          "id": 1,
+          "name": "Green Residency",
+          "address": "Madhapur",
+          "city": "Hyderabad",
+          "state": "Telangana",
+          "pincode": "500081",
+          "full_address": "Madhapur, Hyderabad, Telangana, 500081"
+        }
+      }
+    ],
+    "page": 1,
+    "per_page": 10,
+    "total": 1,
+    "total_pages": 1
+  },
+  "size": "980b"
+}
+```
+
+#### `GET /users/buildings/search`
+Input JSON:
+```json
+{
+  "name": "Green",
+  "address": "Madhapur",
+  "city": "Hyderabad",
+  "state": "Telangana",
+  "page": 1,
+  "per_page": 10
+}
+```
+Response JSON:
+```json
+{
+  "status_code": 200,
+  "success": true,
+  "message": "Building search results fetched",
+  "data": {
+    "items": [
+      {
+        "id": 1,
+        "name": "Green Residency",
+        "address": "Madhapur",
+        "city": "Hyderabad",
+        "state": "Telangana",
+        "pincode": "500081",
+        "full_address": "Madhapur, Hyderabad, Telangana, 500081",
+        "total_towers": 3,
+        "picture_url": null,
+        "towers_count": 3,
+        "flats_count": 12,
+        "available_flats_count": 4,
+        "amenities": [{"id": 1, "name": "Gym", "description": "24x7", "picture_url": null}]
+      }
+    ],
+    "page": 1,
+    "per_page": 10,
+    "total": 1,
+    "total_pages": 1
+  },
+  "size": "860b"
+}
+```
+
 #### `GET /users/buildings/{building_id}/towers/{tower_id}/flats/{flat_id}`
 Input JSON:
 ```json
@@ -972,6 +1171,17 @@ Response JSON:
 }
 ```
 
+Duplicate booking response JSON:
+```json
+{
+  "status_code": 409,
+  "success": false,
+  "message": "Conflict",
+  "user_message": "You have already booked this flat.",
+  "size": "170b"
+}
+```
+
 #### `GET /users/bookings`
 Input JSON:
 ```json
@@ -998,7 +1208,8 @@ Response JSON:
       "created_at": "2026-02-11T09:10:00",
       "building": {"id": 1, "name": "Green Residency"},
       "tower": {"id": 10, "name": "A"},
-      "flat": {"id": 101, "flat_number": "A-101"}
+      "flat": {"id": 101, "flat_number": "A-101"},
+      "manager": {"name": "admin1", "phone": "9876543210"}
     }
   ],
   "size": "690b"
@@ -1030,7 +1241,8 @@ Response JSON:
     "created_at": "2026-02-11T09:10:00",
     "building": {"id": 1, "name": "Green Residency"},
     "tower": {"id": 10, "name": "A"},
-    "flat": {"id": 101, "flat_number": "A-101"}
+    "flat": {"id": 101, "flat_number": "A-101"},
+    "manager": {"name": "admin1", "phone": "9876543210"}
   },
   "size": "680b"
 }
@@ -1463,6 +1675,40 @@ Response JSON:
 }
 ```
 
+#### `PUT /admins/towers/{tower_id}/flats/{flat_id}`
+Input JSON:
+```json
+{
+  "rent_amount": 27000,
+  "security_deposit": 54000,
+  "is_available": false
+}
+```
+Response JSON:
+```json
+{
+  "status_code": 200,
+  "success": true,
+  "message": "Flat updated",
+  "data": {
+    "id": 101,
+    "tower_id": 10,
+    "flat_number": "A-101",
+    "floor_number": 1,
+    "bhk_type": "2BHK",
+    "area_sqft": 1200,
+    "rent_amount": "27000.00",
+    "security_deposit": "54000.00",
+    "is_available": false,
+    "picture_url": null,
+    "picture_public_id": null,
+    "picture_folder": "kots/assets",
+    "created_at": "2026-02-11T08:30:00"
+  },
+  "size": "470b"
+}
+```
+
 #### `GET /admins/towers/{tower_id}/flats`
 Input JSON:
 ```json
@@ -1618,6 +1864,36 @@ Response JSON:
     "amenity_ids": [1, 2, 3]
   },
   "size": "165b"
+}
+```
+
+#### `PUT /admins/amenities/{amenity_id}`
+Input JSON:
+```json
+{
+  "name": "Gym Plus",
+  "description": "24x7 with trainer",
+  "file": "<binary_image>",
+  "folder": "kots/assets"
+}
+```
+Response JSON:
+```json
+{
+  "status_code": 200,
+  "success": true,
+  "message": "Amenity updated",
+  "data": {
+    "id": 1,
+    "building_id": 1,
+    "name": "Gym Plus",
+    "description": "24x7 with trainer",
+    "picture_url": "https://res.cloudinary.com/demo/image/upload/v1/kots/assets/am2.jpg",
+    "picture_public_id": "kots/assets/am2",
+    "picture_folder": "kots/assets",
+    "created_at": "2026-02-11T08:40:00"
+  },
+  "size": "430b"
 }
 ```
 
