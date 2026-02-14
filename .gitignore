@@ -43,3 +43,7 @@ migrations/
 htmlcov/
 .pytest_cache/
 .env.docker/
+.env
+.env.docker
+.env.*
+.dockerignore
