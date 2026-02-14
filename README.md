@@ -8,6 +8,27 @@ This project is a modular Flask REST API for a rental/property workflow with thr
 
 The application uses JWT-based auth, SQLAlchemy ORM, Alembic migrations, and optional Cloudinary image upload for profile and property assets.
 
+## Recent Updates (Feb 2026)
+- Response envelope simplified globally:
+  - Success: `{"status_code": <int>, "data": ...}`
+  - Error: `{"status_code": <int>, "error": "..."}`
+- Added API image-response caching for `GET` routes in `/users`, `/admins`, `/master` when response data includes image URLs:
+  - `ETag`
+  - `Cache-Control: private, max-age=300, stale-while-revalidate=120` (defaults)
+  - `Vary: Authorization`
+- Added frontend static caching headers (when frontend assets are served by this Flask app):
+  - `index.html`: `Cache-Control: no-cache`
+  - versioned/static assets (`.js/.css/fonts/images`): `Cache-Control: public, max-age=31536000, immutable`
+- Added global image compression module before Cloudinary upload:
+  - `common/image_compression.py`
+  - Target ~`100KB` per image
+  - Used in user profile picture upload and admin property/amenity image uploads
+- Search behavior for `/users/flats/search` and `/users/buildings/search` now supports address word-based ranking:
+  - exact word match ranks highest
+  - strong partial match ranks next
+  - medium and weak partial matches rank lower
+  - tunable via environment variables (see Configuration section)
+
 ## Why This Application Is Used
 This application is used to manage the full rental discovery and booking flow for apartment communities (buildings/residencies, towers, and flats) in one system.
 
@@ -29,9 +50,12 @@ flask/
   .env                       # Local environment variables (not for public sharing)
 
   common/
-    response.py              # Unified success/error response envelope + payload size metadata
+    response.py              # Unified minimal success/error response envelope
     permissions.py           # Role-based route guard decorator using JWT identity
     error_handlers.py        # Global HTTP and unhandled exception handlers
+    cache.py                 # API GET caching for image-bearing responses
+    frontend_cache.py        # Static HTML/CSS/JS asset cache headers
+    image_compression.py     # Global image compression helpers (~100KB target)
     __init__.py
 
   users/
@@ -68,6 +92,7 @@ flask/
 - Flask-JWT-Extended (authentication)
 - PostgreSQL driver via `psycopg`
 - Cloudinary SDK (image upload and asset deletion)
+- Pillow (image compression, with graceful fallback if not installed)
 - python-dotenv (environment loading)
 
 ## Core Architecture
@@ -86,6 +111,15 @@ Configured in `config.py` via `.env`:
 - `DATABASE_URL`
 - `JWT_SECRET_KEY`
 - `CLOUDINARY_URL`
+- `IMAGE_GET_CACHE_MAX_AGE` (default `300`)
+- `IMAGE_GET_CACHE_STALE_WHILE_REVALIDATE` (default `120`)
+- `ADDRESS_MATCH_STRONG_RATIO` (default `0.8`)
+- `ADDRESS_MATCH_MEDIUM_RATIO` (default `0.5`)
+- `ADDRESS_SCORE_EXACT` (default `100`)
+- `ADDRESS_SCORE_STRONG_PARTIAL` (default `80`)
+- `ADDRESS_SCORE_MEDIUM_PARTIAL` (default `55`)
+- `ADDRESS_SCORE_WEAK_PARTIAL` (default `30`)
+- `ADDRESS_SCORE_MIN_INCLUDE` (default `1`)
 
 ## Authentication and Authorization
 - JWT tokens are issued on `/users/register` and `/users/login`.
@@ -102,18 +136,10 @@ Configured in `config.py` via `.env`:
 All endpoints return a common envelope from `common/response.py`:
 - Success
   - `status_code`
-  - `success: true`
-  - `message`
   - `data`
-  - optional `size` (when `add_size=True`)
 - Error
   - `status_code`
-  - `success: false`
-  - `message`
-  - `error.detail`
-  - `error.user_message`
-  - `data: null`
-  - optional `size`
+  - `error` (string)
 
 ## Main Modules Explained
 - `users` module: account lifecycle, self profile, profile picture upload/removal, inventory discovery for end users, booking creation and booking read.

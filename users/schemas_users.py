@@ -324,7 +324,6 @@ def serialize_user_profile(user, profile):
 
 def serialize_amenity_summary(amenity):
     return {
-        "id": amenity.id,
         "name": amenity.name,
         "description": amenity.description,
         "picture_url": amenity.picture_url,
@@ -433,7 +432,6 @@ def serialize_tower_detail_with_building(tower, building):
 def serialize_flat_summary(flat):
     return {
         "id": flat.id,
-        "tower_id": flat.tower_id,
         "flat_number": flat.flat_number,
         "floor_number": flat.floor_number,
         "bhk_type": flat.bhk_type,
@@ -540,7 +538,6 @@ def serialize_flat_detail(flat, tower, building):
 def serialize_booking(booking):
     return {
         "id": booking.id,
-        "user_id": booking.user_id,
         "flat_id": booking.flat_id,
         "tower_id": booking.tower_id,
         "building_id": booking.building_id,

@@ -2,6 +2,7 @@ import os
 import cloudinary
 import cloudinary.uploader
 from extensions import db
+from common.image_compression import compress_image_to_100kb
 from admins.models_admins import Building, Tower, Flat, Amenity, Booking
 from admins.schemas_admins import (
     serialize_admins_health,
@@ -62,9 +63,13 @@ def _upload_image(file, folder, default_folder, upload_error_message):
         return None, None, None, err
 
     target_folder = folder or default_folder
+    compressed_file, compression_error = compress_image_to_100kb(file)
+    if compression_error:
+        return None, None, None, _error(400, "Validation Error", compression_error)
+
     try:
         upload_result = cloudinary.uploader.upload(
-            file,
+            compressed_file,
             folder=target_folder,
             resource_type="image",
         )

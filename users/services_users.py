@@ -1,5 +1,7 @@
 from flask_jwt_extended import create_access_token
 from uuid import uuid4
+import re
+from flask import current_app, has_app_context
 from extensions import db
 import cloudinary
 import cloudinary.uploader
@@ -7,6 +9,7 @@ import os
 from users.models_users import RegistrationUser, UserProfile, RevokedToken
 from admins.models_admins import Building, Tower, Flat, Booking, Amenity
 from sqlalchemy.orm import selectinload
+from common.image_compression import compress_image_to_100kb
 from users.schemas_users import (
     validate_registration_payload,
     validate_login_payload,
@@ -43,6 +46,70 @@ def _error(status_code, message, user_message):
         "message": message,
         "user_message": user_message,
     }
+
+
+def _tokenize_words(value):
+    if value is None:
+        return []
+    return re.findall(r"[a-z0-9]+", str(value).lower())
+
+
+def _search_tuning():
+    cfg = current_app.config if has_app_context() else {}
+    return {
+        "strong_ratio": float(cfg.get("ADDRESS_MATCH_STRONG_RATIO", 0.8)),
+        "medium_ratio": float(cfg.get("ADDRESS_MATCH_MEDIUM_RATIO", 0.5)),
+        "score_exact": float(cfg.get("ADDRESS_SCORE_EXACT", 100)),
+        "score_strong": float(cfg.get("ADDRESS_SCORE_STRONG_PARTIAL", 80)),
+        "score_medium": float(cfg.get("ADDRESS_SCORE_MEDIUM_PARTIAL", 55)),
+        "score_weak": float(cfg.get("ADDRESS_SCORE_WEAK_PARTIAL", 30)),
+        "min_include": float(cfg.get("ADDRESS_SCORE_MIN_INCLUDE", 1)),
+    }
+
+
+def _single_word_score(query_word, address_word):
+    if not query_word or not address_word:
+        return 0.0
+
+    if query_word == address_word:
+        return _search_tuning()["score_exact"]
+
+    if query_word in address_word or address_word in query_word:
+        tuning = _search_tuning()
+        smaller = min(len(query_word), len(address_word))
+        larger = max(len(query_word), len(address_word))
+        ratio = smaller / larger if larger else 0.0
+
+        if ratio >= tuning["strong_ratio"]:
+            return tuning["score_strong"]
+        if ratio >= tuning["medium_ratio"]:
+            return tuning["score_medium"]
+        return tuning["score_weak"]
+
+    return 0.0
+
+
+def _address_word_match_score(search_address, candidate_address):
+    query_words = _tokenize_words(search_address)
+    address_words = _tokenize_words(candidate_address)
+
+    if not query_words or not address_words:
+        return 0.0
+
+    per_word_scores = []
+    for query_word in query_words:
+        best = 0.0
+        for address_word in address_words:
+            score = _single_word_score(query_word, address_word)
+            if score > best:
+                best = score
+        per_word_scores.append(best)
+
+    if not per_word_scores:
+        return 0.0
+
+    return sum(per_word_scores) / len(per_word_scores)
+
 
 def _serialize_manager(admin_user, admin_profile):
     name = None
@@ -320,10 +387,13 @@ def upload_profile_picture_service(identity, file, folder):
 
     target_folder = folder or profile.profile_pic_folder or UserProfile.PROFILE_PIC_FOLDER
     old_public_id = profile.profile_pic_public_id
+    compressed_file, compression_error = compress_image_to_100kb(file)
+    if compression_error:
+        return None, _error(400, "Validation Error", compression_error)
 
     try:
         upload_result = cloudinary.uploader.upload(
-            file,
+            compressed_file,
             folder=target_folder,
             resource_type="image",
         )
@@ -472,7 +542,7 @@ def get_building_amenities_service(building_id):
         "status_code": 200,
         "message": "Building amenities fetched",
         "data": {
-            "building": {"id": building.id, "name": building.name},
+            "building": {"name": building.name},
             "amenities": [serialize_amenity_summary(amenity) for amenity in (building.amenities or [])],
         },
     }, None
@@ -492,7 +562,7 @@ def get_building_amenity_service(building_id, amenity_id):
         "status_code": 200,
         "message": "Building amenity fetched",
         "data": {
-            "building": {"id": building.id, "name": building.name},
+            "building": {"name": building.name},
             "amenity": serialize_amenity_summary(amenity),
         },
     }, None
@@ -583,32 +653,49 @@ def search_flats_service(args):
     if params["available_only"]:
         query = query.filter(Flat.is_available.is_(True))
 
-    if params["address"]:
-        query = query.filter(Building.address.ilike(f"%{params['address']}%"))
     if params["city"]:
         query = query.filter(Building.city.ilike(f"%{params['city']}%"))
     if params["state"]:
         query = query.filter(Building.state.ilike(f"%{params['state']}%"))
     if params["flat_type"]:
         query = query.filter(Flat.bhk_type.ilike(f"%{params['flat_type']}%"))
+
     if params["min_rent"] is not None:
         query = query.filter(Flat.rent_amount >= params["min_rent"])
     if params["max_rent"] is not None:
         query = query.filter(Flat.rent_amount <= params["max_rent"])
 
-    total = query.count()
-    total_pages = (total + per_page - 1) // per_page
-    rows = (
-        query.order_by(Flat.id.desc())
-        .offset((page - 1) * per_page)
-        .limit(per_page)
-        .all()
-    )
+    if params["address"]:
+        min_include = _search_tuning()["min_include"]
+        rows = query.all()
+        scored_rows = []
+        for flat, tower, building in rows:
+            score = _address_word_match_score(params["address"], building.address)
+            if score < min_include:
+                continue
+            scored_rows.append((score, flat, tower, building))
+
+        scored_rows.sort(key=lambda item: (-item[0], -item[1].id))
+
+        total = len(scored_rows)
+        total_pages = (total + per_page - 1) // per_page if total else 0
+        start = (page - 1) * per_page
+        end = start + per_page
+        paged_rows = [(flat, tower, building) for _, flat, tower, building in scored_rows[start:end]]
+    else:
+        total = query.count()
+        total_pages = (total + per_page - 1) // per_page
+        paged_rows = (
+            query.order_by(Flat.id.desc())
+            .offset((page - 1) * per_page)
+            .limit(per_page)
+            .all()
+        )
 
     return {
         "status_code": 200,
         "message": "Flat search results fetched",
-        "data": serialize_flat_search_response(rows, page, per_page, total, total_pages),
+        "data": serialize_flat_search_response(paged_rows, page, per_page, total, total_pages),
     }, None
 
 
@@ -624,31 +711,52 @@ def search_buildings_service(args):
     base_query = Building.query
     if params["name"]:
         base_query = base_query.filter(Building.name.ilike(f"%{params['name']}%"))
-    if params["address"]:
-        base_query = base_query.filter(Building.address.ilike(f"%{params['address']}%"))
     if params["city"]:
         base_query = base_query.filter(Building.city.ilike(f"%{params['city']}%"))
     if params["state"]:
         base_query = base_query.filter(Building.state.ilike(f"%{params['state']}%"))
 
-    total = base_query.count()
-    total_pages = (total + per_page - 1) // per_page
-
-    buildings = (
-        base_query.options(
-            selectinload(Building.towers).selectinload(Tower.flats),
-            selectinload(Building.amenities),
+    if params["address"]:
+        min_include = _search_tuning()["min_include"]
+        buildings = (
+            base_query.options(
+                selectinload(Building.towers).selectinload(Tower.flats),
+                selectinload(Building.amenities),
+            ).all()
         )
-        .order_by(Building.id.desc())
-        .offset((page - 1) * per_page)
-        .limit(per_page)
-        .all()
-    )
+
+        scored_buildings = []
+        for building in buildings:
+            score = _address_word_match_score(params["address"], building.address)
+            if score < min_include:
+                continue
+            scored_buildings.append((score, building))
+
+        scored_buildings.sort(key=lambda item: (-item[0], -item[1].id))
+
+        total = len(scored_buildings)
+        total_pages = (total + per_page - 1) // per_page if total else 0
+        start = (page - 1) * per_page
+        end = start + per_page
+        page_buildings = [building for _, building in scored_buildings[start:end]]
+    else:
+        total = base_query.count()
+        total_pages = (total + per_page - 1) // per_page
+        page_buildings = (
+            base_query.options(
+                selectinload(Building.towers).selectinload(Tower.flats),
+                selectinload(Building.amenities),
+            )
+            .order_by(Building.id.desc())
+            .offset((page - 1) * per_page)
+            .limit(per_page)
+            .all()
+        )
 
     return {
         "status_code": 200,
         "message": "Building search results fetched",
-        "data": serialize_building_search_response(buildings, page, per_page, total, total_pages),
+        "data": serialize_building_search_response(page_buildings, page, per_page, total, total_pages),
     }, None
 
 
@@ -764,9 +872,9 @@ def list_user_bookings_service(identity):
         data.append(
             {
                 **serialize_booking(booking),
-                "building": {"id": building.id, "name": building.name},
-                "tower": {"id": tower.id, "name": tower.name},
-                "flat": {"id": flat.id, "flat_number": flat.flat_number},
+                "building": {"name": building.name},
+                "tower": {"name": tower.name},
+                "flat": {"flat_number": flat.flat_number},
                 "manager": _serialize_manager(manager_user, manager_profile),
             }
         )
@@ -801,9 +909,9 @@ def get_user_booking_service(identity, booking_id):
     booking, building, tower, flat, manager_user, manager_profile = row
     data = {
         **serialize_booking(booking),
-        "building": {"id": building.id, "name": building.name},
-        "tower": {"id": tower.id, "name": tower.name},
-        "flat": {"id": flat.id, "flat_number": flat.flat_number},
+        "building": {"name": building.name},
+        "tower": {"name": tower.name},
+        "flat": {"flat_number": flat.flat_number},
         "manager": _serialize_manager(manager_user, manager_profile),
     }
 

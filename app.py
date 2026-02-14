@@ -12,6 +12,8 @@ from master.routes_master import master_bp
 from admins.routes_admins import admins_bp
 from users.routes_users import users_bp
 from common.error_handlers import register_error_handlers
+from common.cache import apply_get_image_cache_headers
+from common.frontend_cache import apply_frontend_asset_cache_headers
 from common.response import success_response, error_response
 
 def create_app():
@@ -22,7 +24,8 @@ def create_app():
         app,
         resources={r"/*": {"origins": app.config.get("ANGULAR_CORS_ORIGINS", [])}},
         methods=["GET", "POST", "PUT", "DELETE", "OPTIONS"],
-        allow_headers=["Content-Type", "Authorization"],
+        allow_headers=["Content-Type", "Authorization", "If-None-Match", "If-Modified-Since"],
+        expose_headers=["ETag", "Cache-Control"],
     )
 
     if app.config.get("CLOUDINARY_URL"):
@@ -51,6 +54,11 @@ def create_app():
     app.register_blueprint(master_bp)
     app.register_blueprint(admins_bp)
     app.register_blueprint(users_bp)
+
+    @app.after_request
+    def apply_response_caching_headers(response):
+        response = apply_frontend_asset_cache_headers(response)
+        return apply_get_image_cache_headers(response)
 
     register_error_handlers(app)
 
