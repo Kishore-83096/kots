@@ -43,11 +43,21 @@ In short, it reduces manual coordination between tenants and property managers b
 ```text
 flask/
   app.py                     # App factory, blueprint registration, root + health endpoints
-  run.py                     # Local run entrypoint
+  wsgi.py                    # WSGI entrypoint for production servers
+  run.py                     # Local Flask run entrypoint
+  serve.py                   # Waitress entrypoint (Windows)
   config.py                  # Environment-driven configuration
   extensions.py              # SQLAlchemy, Migrate, JWT singletons
+  gunicorn.conf.py           # Gunicorn runtime configuration
   requirements.txt           # Python dependency lock list
-  .env                       # Local environment variables (not for public sharing)
+  Dockerfile                 # Container image definition
+  docker-compose.yml         # Container orchestration for local/prod-like runs
+  .dockerignore              # Docker build context exclusions
+  Procfile                   # Procfile-based deployment command
+  .env                       # Local environment variables (development)
+  .env.docker                # Docker-safe environment file (no spaces around =)
+  .gitignore
+  README.md
 
   common/
     response.py              # Unified minimal success/error response envelope
@@ -79,8 +89,10 @@ flask/
     models_master.py         # Placeholder for master-specific models
     __init__.py
 
-  migrations/               # Alembic migration environment + revision history
-  venv/                     # Local virtual environment
+  migrations/                # Alembic migration environment + revision history
+
+  venv/                      # Local virtual environment (not committed)
+  __pycache__/               # Python cache artifacts
 ```
 
 ## Tech Stack
@@ -94,6 +106,10 @@ flask/
 - Cloudinary SDK (image upload and asset deletion)
 - Pillow (image compression, with graceful fallback if not installed)
 - python-dotenv (environment loading)
+- Gunicorn (production WSGI server)
+- Waitress (Windows-compatible WSGI server)
+- Docker (containerization)
+- Docker Compose (multi-container/service orchestration)
 
 ## Core Architecture
 - API routes are split by domain into blueprints:
@@ -120,6 +136,59 @@ Configured in `config.py` via `.env`:
 - `ADDRESS_SCORE_MEDIUM_PARTIAL` (default `55`)
 - `ADDRESS_SCORE_WEAK_PARTIAL` (default `30`)
 - `ADDRESS_SCORE_MIN_INCLUDE` (default `1`)
+
+## Docker Compose Run Guide
+Use Docker Compose for containerized local/prod-like execution.
+
+### Prerequisites
+- Docker Desktop installed and running on Windows.
+- `docker-compose.yml` present in project root (`KOTS/flask`).
+- `.env.docker` present with Docker-safe key-value format (`KEY=value`, no spaces around `=`).
+
+### Start (build + run in background)
+```bash
+docker compose up -d --build
+```
+
+### Start (without rebuild)
+```bash
+docker compose up -d
+```
+
+### Check status
+```bash
+docker compose ps
+```
+
+### Follow logs
+```bash
+docker compose logs -f api
+```
+
+### Health check
+```bash
+curl http://127.0.0.1:5000/health
+```
+Windows PowerShell alternative:
+```powershell
+Invoke-WebRequest -UseBasicParsing http://127.0.0.1:5000/health
+```
+
+### Stop vs remove
+- Stop but keep container (recommended for quick restart):
+```bash
+docker compose stop
+docker compose start
+```
+- Stop and remove container/network:
+```bash
+docker compose down
+```
+
+### Common issue
+- Error: `Either 'SQLALCHEMY_DATABASE_URI' or 'SQLALCHEMY_BINDS' must be set.`
+  - Cause: `DATABASE_URL` missing in `.env.docker`.
+  - Fix: Ensure `.env.docker` contains `DATABASE_URL=...` with no spaces around `=`.
 
 ## Authentication and Authorization
 - JWT tokens are issued on `/users/register` and `/users/login`.
