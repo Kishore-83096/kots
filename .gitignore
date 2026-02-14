@@ -42,3 +42,4 @@ migrations/
 .coverage
 htmlcov/
 .pytest_cache/
+.env.docker/
