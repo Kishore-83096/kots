@@ -87,7 +87,7 @@ class FlatPicture(db.Model):
     )
 
     ASSET_PIC_FOLDER = "kots/assets"
-    MAX_PICTURES_PER_FLAT = 6
+    MAX_PICTURES_PER_FLAT = 18
 
     id = db.Column(db.Integer, primary_key=True)
     flat_id = db.Column(db.Integer, db.ForeignKey("flats.id"), nullable=False)
