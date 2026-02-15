@@ -7,7 +7,7 @@ import cloudinary
 import cloudinary.uploader
 import os
 from users.models_users import RegistrationUser, UserProfile, RevokedToken
-from admins.models_admins import Building, Tower, Flat, Booking, Amenity
+from admins.models_admins import Building, Tower, Flat, FlatPicture, Booking, Amenity
 from sqlalchemy.orm import selectinload
 from common.image_compression import compress_image_to_100kb
 from users.schemas_users import (
@@ -34,6 +34,7 @@ from users.schemas_users import (
     serialize_flat_search_response,
     serialize_building_search_response,
     serialize_flat_detail,
+    serialize_flat_picture,
     serialize_tower_summary,
     serialize_booking,
 )
@@ -778,6 +779,28 @@ def get_flat_detail_service(building_id, tower_id, flat_id):
         "status_code": 200,
         "message": "Flat fetched",
         "data": serialize_flat_detail(flat, tower, building),
+    }, None
+
+
+def list_user_flat_pictures_service(building_id, tower_id, flat_id):
+    building = Building.query.filter_by(id=building_id).first()
+    if not building:
+        return None, _error(404, "Not Found", "Building not found.")
+
+    tower = Tower.query.filter_by(id=tower_id, building_id=building_id).first()
+    if not tower:
+        return None, _error(404, "Not Found", "Tower not found for this building.")
+
+    flat = Flat.query.filter_by(id=flat_id, tower_id=tower_id).first()
+    if not flat:
+        return None, _error(404, "Not Found", "Flat not found for this tower.")
+
+    pictures = FlatPicture.query.filter_by(flat_id=flat.id).order_by(FlatPicture.id.asc()).all()
+
+    return {
+        "status_code": 200,
+        "message": "Flat pictures fetched",
+        "data": [serialize_flat_picture(picture) for picture in pictures],
     }, None
 
 

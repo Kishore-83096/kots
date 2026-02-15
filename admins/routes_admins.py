@@ -29,6 +29,10 @@ from admins.services_admins import (
     list_admin_bookings_service,
     get_admin_booking_service,
     update_admin_booking_status_service,
+    create_flat_picture_service,
+    update_flat_picture_service,
+    list_admin_flat_pictures_service,
+    delete_flat_picture_service,
 )
 
 admins_bp = Blueprint("admins", __name__, url_prefix="/admins")
@@ -212,6 +216,57 @@ def delete_tower(tower_id):
 @role_required("admin", "master")
 def delete_flat(flat_id):
     result, err = delete_flat_service(get_jwt_identity(), flat_id)
+    if err:
+        return error_response(**err, add_size=True)
+    return success_response(status_code=result["status_code"], message=result["message"], data=result["data"], add_size=True)
+
+
+@admins_bp.route("/flats/<int:flat_id>/pictures", methods=["POST"])
+@role_required("admin", "master")
+def create_flat_picture(flat_id):
+    payload = request.form.to_dict() if request.form else request.get_json(silent=True)
+    result, err = create_flat_picture_service(
+        get_jwt_identity(),
+        flat_id,
+        payload,
+        request.files.get("file"),
+        request.form.get("folder"),
+    )
+    if err:
+        return error_response(**err, add_size=True)
+    return success_response(status_code=result["status_code"], message=result["message"], data=result["data"], add_size=True)
+
+
+@admins_bp.route("/flats/<int:flat_id>/pictures/<int:picture_id>", methods=["PUT"])
+@role_required("admin", "master")
+def update_flat_picture(flat_id, picture_id):
+    payload = request.form.to_dict() if request.form else request.get_json(silent=True)
+    result, err = update_flat_picture_service(
+        get_jwt_identity(),
+        flat_id,
+        picture_id,
+        payload,
+        request.files.get("file"),
+        request.form.get("folder"),
+    )
+    if err:
+        return error_response(**err, add_size=True)
+    return success_response(status_code=result["status_code"], message=result["message"], data=result["data"], add_size=True)
+
+
+@admins_bp.route("/flats/<int:flat_id>/pictures", methods=["GET"])
+@role_required("admin", "master")
+def list_flat_pictures(flat_id):
+    result, err = list_admin_flat_pictures_service(get_jwt_identity(), flat_id)
+    if err:
+        return error_response(**err, add_size=True)
+    return success_response(status_code=result["status_code"], message=result["message"], data=result["data"], add_size=True)
+
+
+@admins_bp.route("/flats/<int:flat_id>/pictures/<int:picture_id>", methods=["DELETE"])
+@role_required("admin", "master")
+def delete_flat_picture(flat_id, picture_id):
+    result, err = delete_flat_picture_service(get_jwt_identity(), flat_id, picture_id)
     if err:
         return error_response(**err, add_size=True)
     return success_response(status_code=result["status_code"], message=result["message"], data=result["data"], add_size=True)

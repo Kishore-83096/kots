@@ -193,6 +193,9 @@ def serialize_flat(flat):
         "picture_url": flat.picture_url,
         "picture_public_id": flat.picture_public_id,
         "picture_folder": flat.picture_folder,
+        "flat_pictures": [
+            serialize_flat_picture(picture) for picture in (flat.pictures or [])
+        ] if hasattr(flat, "pictures") else [],
         "amenity_ids": [amenity.id for amenity in flat.amenities] if hasattr(flat, "amenities") else [],
         "created_at": flat.created_at.isoformat(),
     }
@@ -352,3 +355,49 @@ def validate_tower_update_payload(payload):
         return None, errors
 
     return data, None
+
+
+def validate_flat_picture_create_payload(payload):
+    errors = []
+    payload = payload or {}
+    room_name = payload.get("room_name")
+
+    if not room_name or not str(room_name).strip():
+        errors.append("room_name is required.")
+
+    if errors:
+        return None, errors
+
+    return {
+        "room_name": str(room_name).strip(),
+    }, None
+
+
+def validate_flat_picture_update_payload(payload):
+    errors = []
+    payload = payload or {}
+    data = {}
+
+    if "room_name" in payload:
+        room_name = payload.get("room_name")
+        if not room_name or not str(room_name).strip():
+            errors.append("room_name cannot be empty.")
+        else:
+            data["room_name"] = str(room_name).strip()
+
+    if errors:
+        return None, errors
+
+    return data, None
+
+
+def serialize_flat_picture(flat_picture):
+    return {
+        "id": flat_picture.id,
+        "flat_id": flat_picture.flat_id,
+        "room_name": flat_picture.room_name,
+        "picture_url": flat_picture.picture_url,
+        "picture_public_id": flat_picture.picture_public_id,
+        "picture_folder": flat_picture.picture_folder,
+        "created_at": flat_picture.created_at.isoformat(),
+    }

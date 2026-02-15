@@ -77,6 +77,25 @@ class Flat(db.Model):
         backref=db.backref("flats", lazy="dynamic"),
     )
     bookings = db.relationship("Booking", backref="flat", lazy=True, cascade="all, delete-orphan")
+    pictures = db.relationship("FlatPicture", backref="flat", lazy=True, cascade="all, delete-orphan")
+
+
+class FlatPicture(db.Model):
+    __tablename__ = "flat_pictures"
+    __table_args__ = (
+        db.UniqueConstraint("flat_id", "room_name", name="uq_flat_room_name"),
+    )
+
+    ASSET_PIC_FOLDER = "kots/assets"
+    MAX_PICTURES_PER_FLAT = 6
+
+    id = db.Column(db.Integer, primary_key=True)
+    flat_id = db.Column(db.Integer, db.ForeignKey("flats.id"), nullable=False)
+    room_name = db.Column(db.String(80), nullable=False)
+    picture_url = db.Column(db.String(512), nullable=False)
+    picture_public_id = db.Column(db.String(255), nullable=False)
+    picture_folder = db.Column(db.String(255), nullable=False, default=ASSET_PIC_FOLDER)
+    created_at = db.Column(db.DateTime, default=datetime.utcnow, nullable=False)
 
 
 class Amenity(db.Model):

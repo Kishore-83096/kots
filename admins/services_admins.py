@@ -3,7 +3,7 @@ import cloudinary
 import cloudinary.uploader
 from extensions import db
 from common.image_compression import compress_image_to_100kb
-from admins.models_admins import Building, Tower, Flat, Amenity, Booking
+from admins.models_admins import Building, Tower, Flat, FlatPicture, Amenity, Booking
 from admins.schemas_admins import (
     serialize_admins_health,
     serialize_admins_dashboard,
@@ -22,6 +22,9 @@ from admins.schemas_admins import (
     serialize_amenity,
     serialize_booking_admin,
     validate_booking_status_payload,
+    validate_flat_picture_create_payload,
+    validate_flat_picture_update_payload,
+    serialize_flat_picture,
 )
 
 
@@ -48,6 +51,17 @@ def _require_admin_id(admin_id):
         return int(admin_id), None
     except (TypeError, ValueError):
         return None, _error(401, "Unauthorized", "Invalid token.")
+
+
+def _get_admin_owned_flat(admin_id, flat_id):
+    flat = Flat.query.get(flat_id)
+    if not flat:
+        return None, _error(404, "Not Found", "Flat not found.")
+
+    if not flat.tower or not flat.tower.building or flat.tower.building.admin_id != admin_id:
+        return None, _error(403, "Forbidden", "You can only manage flat pictures for your own buildings.")
+
+    return flat, None
     
 def _require_cloudinary_config():
     if not (os.getenv("CLOUDINARY_URL") or cloudinary.config().cloud_name):
@@ -247,6 +261,9 @@ def delete_building_service(admin_id, building_id):
         flats = Flat.query.filter_by(tower_id=tower.id).all()
         for flat in flats:
             asset_public_ids.append(flat.picture_public_id)
+            flat_pictures = FlatPicture.query.filter_by(flat_id=flat.id).all()
+            for flat_picture in flat_pictures:
+                asset_public_ids.append(flat_picture.picture_public_id)
 
     building_name = building.name
     db.session.delete(building)
@@ -524,6 +541,173 @@ def get_flat_service(admin_id, tower_id, flat_id):
     }, None
 
 
+def list_admin_flat_pictures_service(admin_id, flat_id):
+    admin_id, err = _require_admin_id(admin_id)
+    if err:
+        return None, err
+
+    flat, err = _get_admin_owned_flat(admin_id, flat_id)
+    if err:
+        return None, err
+
+    pictures = FlatPicture.query.filter_by(flat_id=flat.id).order_by(FlatPicture.id.asc()).all()
+    return {
+        "status_code": 200,
+        "message": "Flat pictures fetched",
+        "data": [serialize_flat_picture(picture) for picture in pictures],
+    }, None
+
+
+def create_flat_picture_service(admin_id, flat_id, payload, file, folder):
+    payload, errors = validate_flat_picture_create_payload(payload)
+    if errors:
+        return None, _error(400, "Validation Error", " ".join(errors))
+
+    if not file:
+        return None, _error(400, "Validation Error", "file is required.")
+
+    admin_id, err = _require_admin_id(admin_id)
+    if err:
+        return None, err
+
+    flat, err = _get_admin_owned_flat(admin_id, flat_id)
+    if err:
+        return None, err
+
+    existing_pictures = FlatPicture.query.filter_by(flat_id=flat.id).order_by(FlatPicture.id.asc()).all()
+    if len(existing_pictures) >= FlatPicture.MAX_PICTURES_PER_FLAT:
+        return None, _error(
+            400,
+            "Validation Error",
+            f"Maximum {FlatPicture.MAX_PICTURES_PER_FLAT} pictures allowed per flat.",
+        )
+
+    room_name = payload["room_name"]
+    room_name_lower = room_name.lower()
+    if any((picture.room_name or "").strip().lower() == room_name_lower for picture in existing_pictures):
+        return None, _error(409, "Conflict", "A picture for this room_name already exists in this flat.")
+
+    picture_url, public_id, target_folder, err = _upload_image(
+        file,
+        folder,
+        FlatPicture.ASSET_PIC_FOLDER,
+        "Failed to upload flat room picture.",
+    )
+    if err:
+        return None, err
+
+    flat_picture = FlatPicture(
+        flat_id=flat.id,
+        room_name=room_name,
+        picture_url=picture_url,
+        picture_public_id=public_id,
+        picture_folder=target_folder or FlatPicture.ASSET_PIC_FOLDER,
+    )
+
+    db.session.add(flat_picture)
+    db.session.commit()
+
+    return {
+        "status_code": 201,
+        "message": "Flat picture created",
+        "data": serialize_flat_picture(flat_picture),
+    }, None
+
+
+def update_flat_picture_service(admin_id, flat_id, picture_id, payload, file, folder):
+    payload, errors = validate_flat_picture_update_payload(payload)
+    if errors:
+        return None, _error(400, "Validation Error", " ".join(errors))
+
+    if not payload and not file:
+        return None, _error(400, "Validation Error", "Provide room_name and/or file to update.")
+
+    admin_id, err = _require_admin_id(admin_id)
+    if err:
+        return None, err
+
+    flat, err = _get_admin_owned_flat(admin_id, flat_id)
+    if err:
+        return None, err
+
+    flat_picture = FlatPicture.query.filter_by(id=picture_id, flat_id=flat.id).first()
+    if not flat_picture:
+        return None, _error(404, "Not Found", "Flat picture not found for this flat.")
+
+    if "room_name" in payload:
+        next_room_name = payload["room_name"]
+        next_room_name_lower = next_room_name.lower()
+        existing_pictures = FlatPicture.query.filter_by(flat_id=flat.id).all()
+        duplicate = next(
+            (
+                picture
+                for picture in existing_pictures
+                if picture.id != flat_picture.id
+                and (picture.room_name or "").strip().lower() == next_room_name_lower
+            ),
+            None,
+        )
+        if duplicate:
+            return None, _error(409, "Conflict", "A picture for this room_name already exists in this flat.")
+        flat_picture.room_name = next_room_name
+
+    old_public_id = flat_picture.picture_public_id
+    picture_url, public_id, target_folder, err = _upload_image(
+        file,
+        folder,
+        flat_picture.picture_folder or FlatPicture.ASSET_PIC_FOLDER,
+        "Failed to upload flat room picture.",
+    )
+    if err:
+        return None, err
+    if file:
+        flat_picture.picture_url = picture_url
+        flat_picture.picture_public_id = public_id
+        flat_picture.picture_folder = target_folder or FlatPicture.ASSET_PIC_FOLDER
+
+    db.session.commit()
+    _maybe_destroy_old_image(old_public_id, flat_picture.picture_public_id, bool(file))
+
+    return {
+        "status_code": 200,
+        "message": "Flat picture updated",
+        "data": serialize_flat_picture(flat_picture),
+    }, None
+
+
+def delete_flat_picture_service(admin_id, flat_id, picture_id):
+    admin_id, err = _require_admin_id(admin_id)
+    if err:
+        return None, err
+
+    flat, err = _get_admin_owned_flat(admin_id, flat_id)
+    if err:
+        return None, err
+
+    flat_picture = FlatPicture.query.filter_by(id=picture_id, flat_id=flat.id).first()
+    if not flat_picture:
+        return None, _error(404, "Not Found", "Flat picture not found for this flat.")
+
+    picture_public_id = flat_picture.picture_public_id
+    deleted_id = flat_picture.id
+    deleted_room_name = flat_picture.room_name
+
+    db.session.delete(flat_picture)
+    db.session.commit()
+
+    _destroy_cloudinary_assets([picture_public_id])
+
+    return {
+        "status_code": 200,
+        "message": "Flat picture deleted",
+        "data": {
+            "id": deleted_id,
+            "flat_id": flat.id,
+            "room_name": deleted_room_name,
+        },
+    }, None
+
+
 
 
 
@@ -746,6 +930,9 @@ def delete_tower_service(admin_id, tower_id):
     flats = Flat.query.filter_by(tower_id=tower.id).all()
     for flat in flats:
         asset_public_ids.append(flat.picture_public_id)
+        flat_pictures = FlatPicture.query.filter_by(flat_id=flat.id).all()
+        for flat_picture in flat_pictures:
+            asset_public_ids.append(flat_picture.picture_public_id)
 
     tower_id_value = tower.id
     db.session.delete(tower)
@@ -777,12 +964,15 @@ def delete_flat_service(admin_id, flat_id):
     if not flat.tower or not flat.tower.building or flat.tower.building.admin_id != admin_id:
         return None, _error(403, "Forbidden", "You can only delete flats for your own buildings.")
 
-    old_public_id = flat.picture_public_id
+    asset_public_ids = [flat.picture_public_id]
+    flat_pictures = FlatPicture.query.filter_by(flat_id=flat.id).all()
+    for flat_picture in flat_pictures:
+        asset_public_ids.append(flat_picture.picture_public_id)
     flat_id_value = flat.id
     db.session.delete(flat)
     db.session.commit()
 
-    _destroy_cloudinary_assets([old_public_id])
+    _destroy_cloudinary_assets(asset_public_ids)
 
     return {
         "status_code": 200,

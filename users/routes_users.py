@@ -22,6 +22,7 @@ from users.services_users import (
     search_flats_service,
     search_buildings_service,
     get_flat_detail_service,
+    list_user_flat_pictures_service,
     list_building_towers_service,
     create_security_deposit_booking_service,
     list_user_bookings_service,
@@ -210,6 +211,15 @@ def search_buildings():
 @jwt_required()
 def get_flat_detail(building_id, tower_id, flat_id):
     result, err = get_flat_detail_service(building_id, tower_id, flat_id)
+    if err:
+        return error_response(**err, add_size=True)
+    return success_response(status_code=result["status_code"], message=result["message"], data=result["data"], add_size=True)
+
+
+@users_bp.route("/buildings/<int:building_id>/towers/<int:tower_id>/flats/<int:flat_id>/pictures", methods=["GET"])
+@jwt_required()
+def list_flat_pictures(building_id, tower_id, flat_id):
+    result, err = list_user_flat_pictures_service(building_id, tower_id, flat_id)
     if err:
         return error_response(**err, add_size=True)
     return success_response(status_code=result["status_code"], message=result["message"], data=result["data"], add_size=True)

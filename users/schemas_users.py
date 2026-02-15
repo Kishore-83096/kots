@@ -443,6 +443,16 @@ def serialize_flat_summary(flat):
     }
 
 
+def serialize_flat_picture(flat_picture):
+    return {
+        "id": flat_picture.id,
+        "flat_id": flat_picture.flat_id,
+        "room_name": flat_picture.room_name,
+        "picture_url": flat_picture.picture_url,
+        "created_at": flat_picture.created_at.isoformat(),
+    }
+
+
 def serialize_flats_response(flats, tower, building, page, per_page, total, total_pages):
     return {
         "building": {
@@ -531,6 +541,7 @@ def serialize_flat_detail(flat, tower, building):
                 part for part in [building.address, building.city, building.state, building.pincode] if part
             ),
         },
+        "pictures": [serialize_flat_picture(picture) for picture in (flat.pictures or [])],
         "amenities": [serialize_amenity_summary(amenity) for amenity in (flat.amenities or [])],
     }
 
