@@ -28,6 +28,13 @@ The application uses JWT-based auth, SQLAlchemy ORM, Alembic migrations, and opt
   - strong partial match ranks next
   - medium and weak partial matches rank lower
   - tunable via environment variables (see Configuration section)
+- Admin booking approval workflow hardened:
+  - approving a booking now marks the booked flat as unavailable (`flat.is_available = false`)
+  - approving an already-approved booking is blocked with `409 Conflict`
+  - approving when the flat already has another approved booking is blocked with `409 Conflict`
+- Flat room-picture capacity increased:
+  - `FlatPicture.MAX_PICTURES_PER_FLAT` changed from `6` to `18`
+  - create-picture validation now allows up to 18 pictures per flat
 
 ## Why This Application Is Used
 This application is used to manage the full rental discovery and booking flow for apartment communities (buildings/residencies, towers, and flats) in one system.
@@ -508,7 +515,11 @@ All admin routes except `/admins/health` require role `admin` or `master`.
 #### `PUT /admins/bookings/{booking_id}/status`
 - Auth: admin/master
 - Body: `status` in `PENDING|APPROVED|DECLINED`
-- Purpose: update booking status.
+- Purpose: update booking status with approval guards.
+- Approval rules:
+  - on `APPROVED`, backend sets the related flat `is_available = false`
+  - returns `409 Conflict` if this booking is already approved
+  - returns `409 Conflict` if the flat already has another approved booking (or is already unavailable)
 
 ---
 
@@ -600,6 +611,9 @@ All master routes except `/master/health` require role `master`.
    - copied security deposit/address/user_name snapshot fields.
    - duplicate booking for same `user_id + flat_id` is blocked with `409 Conflict`.
 3. Admin can read bookings and update status via `/admins/bookings/{booking_id}/status`.
+4. When admin sets `status = APPROVED`:
+   - flat availability is automatically changed to `false`
+   - duplicate/invalid approvals are rejected with `409 Conflict`.
 
 ## Important Notes
 - Logout now revokes the current JWT access token by storing its `jti` in `revoked_tokens`.

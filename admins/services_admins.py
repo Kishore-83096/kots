@@ -1223,6 +1223,32 @@ def update_admin_booking_status_service(admin_id, booking_id, payload):
     if status not in ("PENDING", "APPROVED", "DECLINED"):
         return None, _error(400, "Validation Error", "status must be PENDING, APPROVED, or DECLINED.")
 
+    if status == "APPROVED":
+        if booking.status == "APPROVED":
+            return None, _error(409, "Conflict", "This booking is already approved.")
+
+        flat = Flat.query.get(booking.flat_id)
+        if not flat:
+            return None, _error(404, "Not Found", "Flat not found for this booking.")
+
+        already_approved_booking = (
+            Booking.query
+            .filter(
+                Booking.flat_id == booking.flat_id,
+                Booking.status == "APPROVED",
+                Booking.id != booking.id,
+            )
+            .first()
+        )
+        if already_approved_booking or flat.is_available is False:
+            return None, _error(
+                409,
+                "Conflict",
+                "This flat already has an approved booking.",
+            )
+
+        flat.is_available = False
+
     booking.status = status
     db.session.commit()
 
