@@ -1,5 +1,7 @@
 # KOTS Flask Backend
 - **Live Project:** https://kotsfrontend.onrender.com/
+- **Render Note:** This project is deployed on Render (free plan). If the service is idle, the first request can take around 45 seconds while Render wakes the server.
+- **Future Deployment Plan:** Planned migration to Google Cloud in a future release.
 
 ## Summary
 This project is a modular Flask REST API for a rental/property workflow with three role scopes:
@@ -145,58 +147,82 @@ Configured in `config.py` via `.env`:
 - `ADDRESS_SCORE_WEAK_PARTIAL` (default `30`)
 - `ADDRESS_SCORE_MIN_INCLUDE` (default `1`)
 
-## Docker Compose Run Guide
-Use Docker Compose for containerized local/prod-like execution.
+## Dockerized Run Guide
+Use Docker Compose from `KOTS/flask`.
 
 ### Prerequisites
-- Docker Desktop installed and running on Windows.
-- `docker-compose.yml` present in project root (`KOTS/flask`).
-- `.env.docker` present with Docker-safe key-value format (`KEY=value`, no spaces around `=`).
+- Docker Desktop installed and running.
+- `docker-compose.yml` and `.env.docker` available in this folder.
+- `.env.docker` must use `KEY=value` format (no spaces around `=`).
 
-### Start (build + run in background)
+### Core Commands (start/stop/restart)
+- Build image and start API container:
 ```bash
 docker compose up -d --build
 ```
-
-### Start (without rebuild)
+- Start existing container without rebuild:
 ```bash
 docker compose up -d
 ```
-
-### Check status
-```bash
-docker compose ps
-```
-
-### Follow logs
-```bash
-docker compose logs -f api
-```
-
-### Health check
-```bash
-curl http://127.0.0.1:5000/health
-```
-Windows PowerShell alternative:
-```powershell
-Invoke-WebRequest -UseBasicParsing http://127.0.0.1:5000/health
-```
-
-### Stop vs remove
-- Stop but keep container (recommended for quick restart):
+- Stop container (keep it for quick start later):
 ```bash
 docker compose stop
+```
+- Start a previously stopped container:
+```bash
 docker compose start
 ```
-- Stop and remove container/network:
+- Restart container:
+```bash
+docker compose restart
+```
+- Stop and remove container + network:
 ```bash
 docker compose down
 ```
 
-### Common issue
+### Useful Day-to-Day Commands
+- See running status:
+```bash
+docker compose ps
+```
+- Stream backend logs:
+```bash
+docker compose logs -f api
+```
+- Last 200 log lines:
+```bash
+docker compose logs --tail=200 api
+```
+- Open shell inside API container:
+```bash
+docker compose exec api sh
+```
+- Rebuild without cache:
+```bash
+docker compose build --no-cache
+docker compose up -d
+```
+
+### Health Check
+```bash
+curl http://127.0.0.1:5000/health
+```
+PowerShell:
+```powershell
+Invoke-WebRequest -UseBasicParsing http://127.0.0.1:5000/health
+```
+
+### Full Cleanup (if you need a fresh reset)
+```bash
+docker compose down --volumes --remove-orphans
+docker image prune -f
+```
+
+### Common Issue
 - Error: `Either 'SQLALCHEMY_DATABASE_URI' or 'SQLALCHEMY_BINDS' must be set.`
-  - Cause: `DATABASE_URL` missing in `.env.docker`.
-  - Fix: Ensure `.env.docker` contains `DATABASE_URL=...` with no spaces around `=`.
+- Cause: `DATABASE_URL` is missing from `.env.docker`.
+- Fix: add `DATABASE_URL=...` in `.env.docker` and restart with `docker compose up -d --build`.
 
 ## Authentication and Authorization
 - JWT tokens are issued on `/users/register` and `/users/login`.
