@@ -1,19 +1,44 @@
 # KOTS Flask Backend
-- **Main Live App (Frontend):** https://kots-frontend-445482244619.us-central1.run.app
-- **Live API (Backend):** https://kots-flask-445482244619.us-central1.run.app
+- **Main Live App (Frontend):** https://kots-frontend-445482244619.asia-south1.run.app
+- **Live API (Backend):** https://kots-flask-445482244619.asia-south1.run.app
 - **Deployment Platform:** Google Cloud Run (Docker)
 
-## Google Cloud Deployment
+## Quick Run Modes
+- Local Python backend entrypoint: `run.py`
+- Docker local run: `docker compose`
+- Cloud deployment: Google Cloud Run (`asia-south1` Mumbai)
+
+### 1) Normal Python Run (`run.py`)
+```bash
+cd KOTS/flask
+python -m venv venv
+source venv/bin/activate   # Windows: venv\Scripts\activate
+pip install -r requirements.txt
+python run.py
+```
+Health check:
+```bash
+curl http://127.0.0.1:5000/health
+```
+
+### 2) Dockerized Run (Local)
+```bash
+cd KOTS/flask
+docker compose up -d --build
+docker compose logs -f api
+```
+
+### 3) Google Cloud Deployment (Mumbai)
 - Frontend Cloud Run service: `kots-frontend`
 - Backend Cloud Run service: `kots-flask`
-- Artifact Registry region: `us-central1`
+- Artifact Registry region: `asia-south1`
 - Project ID: `kots-rental-platform-26685`
 
 ### Deploy Backend (Docker -> Cloud Run)
 ```bash
-docker build -t us-central1-docker.pkg.dev/kots-rental-platform-26685/kots-flask-repo/kots-flask:v2 .
-docker push us-central1-docker.pkg.dev/kots-rental-platform-26685/kots-flask-repo/kots-flask:v2
-gcloud run deploy kots-flask --image us-central1-docker.pkg.dev/kots-rental-platform-26685/kots-flask-repo/kots-flask:v2 --region us-central1 --platform managed --allow-unauthenticated
+docker build -t asia-south1-docker.pkg.dev/<PROJECT_ID>/kots-flask-repo/kots-flask:v1-india .
+docker push asia-south1-docker.pkg.dev/<PROJECT_ID>/kots-flask-repo/kots-flask:v1-india
+gcloud run deploy kots-flask --image asia-south1-docker.pkg.dev/<PROJECT_ID>/kots-flask-repo/kots-flask:v1-india --region asia-south1 --platform managed --allow-unauthenticated --env-vars-file=cloudrun.env.yaml
 ```
 
 ## Summary
