@@ -1,7 +1,20 @@
 # KOTS Flask Backend
-- **Live Project:** https://kotsfrontend.onrender.com/
-- **Render Note:** This project is deployed on Render (free plan). If the service is idle, the first request can take around 45 seconds while Render wakes the server.
-- **Future Deployment Plan:** Planned migration to Google Cloud in a future release.
+- **Main Live App (Frontend):** https://kots-frontend-445482244619.us-central1.run.app
+- **Live API (Backend):** https://kots-flask-445482244619.us-central1.run.app
+- **Deployment Platform:** Google Cloud Run (Docker)
+
+## Google Cloud Deployment
+- Frontend Cloud Run service: `kots-frontend`
+- Backend Cloud Run service: `kots-flask`
+- Artifact Registry region: `us-central1`
+- Project ID: `kots-rental-platform-26685`
+
+### Deploy Backend (Docker -> Cloud Run)
+```bash
+docker build -t us-central1-docker.pkg.dev/kots-rental-platform-26685/kots-flask-repo/kots-flask:v2 .
+docker push us-central1-docker.pkg.dev/kots-rental-platform-26685/kots-flask-repo/kots-flask:v2
+gcloud run deploy kots-flask --image us-central1-docker.pkg.dev/kots-rental-platform-26685/kots-flask-repo/kots-flask:v2 --region us-central1 --platform managed --allow-unauthenticated
+```
 
 ## Summary
 This project is a modular Flask REST API for a rental/property workflow with three role scopes:

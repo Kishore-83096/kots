@@ -47,3 +47,20 @@ htmlcov/
 .env.docker
 .env.*
 .dockerignore
+
+# Secrets / credentials
+!.env.example
+!.env.*.example
+cloudrun.env*.yaml
+cloudrun.env*.yml
+secrets*.yaml
+secrets*.yml
+*.pem
+*.key
+*.crt
+*.p12
+*.pfx
+*service-account*.json
+firebase-adminsdk*.json
+application_default_credentials.json
+credentials.json
