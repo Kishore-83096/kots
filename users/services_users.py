@@ -1,6 +1,7 @@
 from flask_jwt_extended import create_access_token
 from uuid import uuid4
 import re
+from difflib import SequenceMatcher
 from flask import current_app, has_app_context
 from extensions import db
 import cloudinary
@@ -60,11 +61,16 @@ def _search_tuning():
     return {
         "strong_ratio": float(cfg.get("ADDRESS_MATCH_STRONG_RATIO", 0.8)),
         "medium_ratio": float(cfg.get("ADDRESS_MATCH_MEDIUM_RATIO", 0.5)),
+        "fuzzy_high_ratio": float(cfg.get("ADDRESS_MATCH_FUZZY_HIGH_RATIO", 0.72)),
+        "fuzzy_medium_ratio": float(cfg.get("ADDRESS_MATCH_FUZZY_MEDIUM_RATIO", 0.55)),
         "score_exact": float(cfg.get("ADDRESS_SCORE_EXACT", 100)),
         "score_strong": float(cfg.get("ADDRESS_SCORE_STRONG_PARTIAL", 80)),
         "score_medium": float(cfg.get("ADDRESS_SCORE_MEDIUM_PARTIAL", 55)),
         "score_weak": float(cfg.get("ADDRESS_SCORE_WEAK_PARTIAL", 30)),
-        "min_include": float(cfg.get("ADDRESS_SCORE_MIN_INCLUDE", 1)),
+        "score_fuzzy_high": float(cfg.get("ADDRESS_SCORE_FUZZY_HIGH", 26)),
+        "score_fuzzy_medium": float(cfg.get("ADDRESS_SCORE_FUZZY_MEDIUM", 16)),
+        "score_fuzzy_low": float(cfg.get("ADDRESS_SCORE_FUZZY_LOW", 6)),
+        "min_include": float(cfg.get("ADDRESS_SCORE_MIN_INCLUDE", 5)),
     }
 
 
@@ -75,8 +81,9 @@ def _single_word_score(query_word, address_word):
     if query_word == address_word:
         return _search_tuning()["score_exact"]
 
+    tuning = _search_tuning()
+
     if query_word in address_word or address_word in query_word:
-        tuning = _search_tuning()
         smaller = min(len(query_word), len(address_word))
         larger = max(len(query_word), len(address_word))
         ratio = smaller / larger if larger else 0.0
@@ -87,7 +94,15 @@ def _single_word_score(query_word, address_word):
             return tuning["score_medium"]
         return tuning["score_weak"]
 
-    return 0.0
+    # Fuzzy similarity allows typo-tolerant ranking (e.g., "Madhapur" vs "Madapur").
+    fuzzy_ratio = SequenceMatcher(None, query_word, address_word).ratio()
+    if fuzzy_ratio >= tuning["fuzzy_high_ratio"]:
+        return tuning["score_fuzzy_high"] + (fuzzy_ratio * 4)
+    if fuzzy_ratio >= tuning["fuzzy_medium_ratio"]:
+        return tuning["score_fuzzy_medium"] + (fuzzy_ratio * 4)
+    if fuzzy_ratio >= 0.35:
+        return tuning["score_fuzzy_low"] + (fuzzy_ratio * 4)
+    return fuzzy_ratio * 2
 
 
 def _address_word_match_score(search_address, candidate_address):

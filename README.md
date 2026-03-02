@@ -77,6 +77,24 @@ The application uses JWT-based auth, SQLAlchemy ORM, Alembic migrations, and opt
   - `FlatPicture.MAX_PICTURES_PER_FLAT` changed from `6` to `18`
   - create-picture validation now allows up to 18 pictures per flat
 
+## Recent Updates (Mar 2026)
+- User discovery/browsing endpoints are now public (no JWT required):
+  - `GET /users/buildings`
+  - `GET /users/buildings/{building_id}`
+  - `GET /users/buildings/{building_id}/amenities`
+  - `GET /users/buildings/{building_id}/amenities/{amenity_id}`
+  - `GET /users/buildings/{building_id}/towers`
+  - `GET /users/buildings/{building_id}/towers/{tower_id}`
+  - `GET /users/buildings/{building_id}/towers/{tower_id}/flats`
+  - `GET /users/buildings/{building_id}/towers/{tower_id}/flats/{flat_id}`
+  - `GET /users/buildings/{building_id}/towers/{tower_id}/flats/{flat_id}/pictures`
+  - `GET /users/flats/search`
+  - `GET /users/buildings/search`
+- Booking creation remains protected:
+  - `POST /users/flats/{flat_id}/bookings` still requires JWT.
+- User-specific endpoints remain protected:
+  - `/users/me`, `/users/profile`, `/users/logout`, `/users/bookings`, `/users/bookings/{booking_id}`.
+
 ## Why This Application Is Used
 This application is used to manage the full rental discovery and booking flow for apartment communities (buildings/residencies, towers, and flats) in one system.
 
@@ -371,38 +389,38 @@ All endpoints return a common envelope from `common/response.py`:
 - Behavior: clears profile image data and attempts Cloudinary delete.
 
 #### `GET /users/buildings`
-- Auth: JWT required
+- Auth: none
 - Purpose: list buildings with counts (towers/flats/available flats) and amenities.
 
 #### `GET /users/buildings/{building_id}`
-- Auth: JWT required
+- Auth: none
 - Purpose: get building detail with towers and amenities.
 
 #### `GET /users/buildings/{building_id}/amenities`
-- Auth: JWT required
+- Auth: none
 - Purpose: list amenities for a building.
 
 #### `GET /users/buildings/{building_id}/amenities/{amenity_id}`
-- Auth: JWT required
+- Auth: none
 - Purpose: get a single amenity for a building.
 
 #### `GET /users/buildings/{building_id}/towers`
-- Auth: JWT required
+- Auth: none
 - Purpose: list towers for building.
 
 #### `GET /users/buildings/{building_id}/towers/{tower_id}`
-- Auth: JWT required
+- Auth: none
 - Purpose: tower detail including building address metadata.
 
 #### `GET /users/buildings/{building_id}/towers/{tower_id}/flats`
-- Auth: JWT required
+- Auth: none
 - Query:
   - `status`: `all|available|true|false` (optional)
   - `page`: integer >= 1 (optional, default `1`)
 - Purpose: paginated flat listing (`per_page=10`).
 
 #### `GET /users/flats/search`
-- Auth: JWT required
+- Auth: none
 - Query:
   - `address` (optional, partial match)
   - `city` (optional, partial match)
@@ -416,7 +434,7 @@ All endpoints return a common envelope from `common/response.py`:
 - Purpose: paginated search for flats across buildings by location and rent range.
 
 #### `GET /users/buildings/search`
-- Auth: JWT required
+- Auth: none
 - Query:
   - `name` (optional, partial match)
   - `address` (optional, partial match)
@@ -427,7 +445,7 @@ All endpoints return a common envelope from `common/response.py`:
 - Purpose: paginated search for buildings/residencies by name and location.
 
 #### `GET /users/buildings/{building_id}/towers/{tower_id}/flats/{flat_id}`
-- Auth: JWT required
+- Auth: none
 - Purpose: flat detail including building/tower context and amenities.
 
 #### `POST /users/flats/{flat_id}/bookings`

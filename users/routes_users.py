@@ -131,7 +131,6 @@ def logout():
 
 
 @users_bp.route("/buildings", methods=["GET"])
-@jwt_required()
 def list_buildings():
     result, err = list_buildings_service()
     if err:
@@ -140,7 +139,6 @@ def list_buildings():
 
 
 @users_bp.route("/buildings/<int:building_id>", methods=["GET"])
-@jwt_required()
 def get_building_detail(building_id):
     result, err = get_building_detail_service(building_id)
     if err:
@@ -149,7 +147,6 @@ def get_building_detail(building_id):
 
 
 @users_bp.route("/buildings/<int:building_id>/amenities", methods=["GET"])
-@jwt_required()
 def get_building_amenities(building_id):
     result, err = get_building_amenities_service(building_id)
     if err:
@@ -158,7 +155,6 @@ def get_building_amenities(building_id):
 
 
 @users_bp.route("/buildings/<int:building_id>/amenities/<int:amenity_id>", methods=["GET"])
-@jwt_required()
 def get_building_amenity(building_id, amenity_id):
     result, err = get_building_amenity_service(building_id, amenity_id)
     if err:
@@ -167,7 +163,6 @@ def get_building_amenity(building_id, amenity_id):
 
 
 @users_bp.route("/buildings/<int:building_id>/towers/<int:tower_id>", methods=["GET"])
-@jwt_required()
 def get_tower_detail(building_id, tower_id):
     result, err = get_tower_detail_service(building_id, tower_id)
     if err:
@@ -176,7 +171,6 @@ def get_tower_detail(building_id, tower_id):
 
 
 @users_bp.route("/buildings/<int:building_id>/towers/<int:tower_id>/flats", methods=["GET"])
-@jwt_required()
 def list_tower_flats(building_id, tower_id):
     result, err = list_tower_flats_service(
         building_id,
@@ -190,7 +184,6 @@ def list_tower_flats(building_id, tower_id):
 
 
 @users_bp.route("/flats/search", methods=["GET"])
-@jwt_required()
 def search_flats():
     result, err = search_flats_service(request.args)
     if err:
@@ -199,7 +192,6 @@ def search_flats():
 
 
 @users_bp.route("/buildings/search", methods=["GET"])
-@jwt_required()
 def search_buildings():
     result, err = search_buildings_service(request.args)
     if err:
@@ -208,7 +200,6 @@ def search_buildings():
 
 
 @users_bp.route("/buildings/<int:building_id>/towers/<int:tower_id>/flats/<int:flat_id>", methods=["GET"])
-@jwt_required()
 def get_flat_detail(building_id, tower_id, flat_id):
     result, err = get_flat_detail_service(building_id, tower_id, flat_id)
     if err:
@@ -217,7 +208,6 @@ def get_flat_detail(building_id, tower_id, flat_id):
 
 
 @users_bp.route("/buildings/<int:building_id>/towers/<int:tower_id>/flats/<int:flat_id>/pictures", methods=["GET"])
-@jwt_required()
 def list_flat_pictures(building_id, tower_id, flat_id):
     result, err = list_user_flat_pictures_service(building_id, tower_id, flat_id)
     if err:
@@ -226,7 +216,6 @@ def list_flat_pictures(building_id, tower_id, flat_id):
 
 
 @users_bp.route("/buildings/<int:building_id>/towers", methods=["GET"])
-@jwt_required()
 def list_building_towers(building_id):
     result, err = list_building_towers_service(building_id)
     if err:
