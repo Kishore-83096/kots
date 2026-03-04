@@ -290,10 +290,11 @@ def serialize_amenity(amenity):
     }
 
 
-def serialize_booking_admin(booking, building, tower, flat):
+def serialize_booking_admin(booking, building, tower, flat, user_display, user_email):
     return {
         "id": booking.id,
-        "user_id": booking.user_id,
+        "user_display": user_display,
+        "user_email": user_email,
         "flat_id": booking.flat_id,
         "tower_id": booking.tower_id,
         "building_id": booking.building_id,

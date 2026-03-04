@@ -94,6 +94,29 @@ The application uses JWT-based auth, SQLAlchemy ORM, Alembic migrations, and opt
   - `POST /users/flats/{flat_id}/bookings` still requires JWT.
 - User-specific endpoints remain protected:
   - `/users/me`, `/users/profile`, `/users/logout`, `/users/bookings`, `/users/bookings/{booking_id}`.
+- Cloud Run deployment note:
+  - PowerShell line continuation uses backtick (`` ` ``), not `\`.
+  - Example variable assignment in PowerShell: `$TAG = "v2-mar-2026"`.
+- Cloudinary on Cloud Run:
+  - `CLOUDINARY_URL` must be present in `cloudrun.env.yaml` for upload APIs.
+- Search is now production-grade PostgreSQL trigram search (`pg_trgm`) for:
+  - `GET /users/flats/search`
+  - `GET /users/buildings/search`
+  - behavior:
+    - typo-tolerant matching
+    - closest matches ranked first
+    - low/non-relevant address matches excluded
+  - backed by DB-level trigram indexes on building `address`, `city`, `state`, `pincode`, `name`.
+- Flat search endpoint enhancements:
+  - `GET /users/flats/search` now supports `status=all|available|unavailable`
+  - response now includes global `status_counts` for all/available/unavailable totals (not page-only counts)
+  - supports consistent server-side filtering across paginated pages.
+- Admin bookings response enhancements:
+  - `/admins/bookings` and `/admins/bookings/{booking_id}` now return:
+    - `user_display` (username if exists, otherwise email)
+    - `user_email`
+  - avoids exposing only raw `user_id` in booking cards/details.
+- End-user API errors are more specific across flows (including image upload) so frontend can show clearer failure reasons.
 
 ## Why This Application Is Used
 This application is used to manage the full rental discovery and booking flow for apartment communities (buildings/residencies, towers, and flats) in one system.
@@ -195,13 +218,17 @@ Configured in `config.py` via `.env`:
 - `CLOUDINARY_URL`
 - `IMAGE_GET_CACHE_MAX_AGE` (default `300`)
 - `IMAGE_GET_CACHE_STALE_WHILE_REVALIDATE` (default `120`)
-- `ADDRESS_MATCH_STRONG_RATIO` (default `0.8`)
-- `ADDRESS_MATCH_MEDIUM_RATIO` (default `0.5`)
-- `ADDRESS_SCORE_EXACT` (default `100`)
-- `ADDRESS_SCORE_STRONG_PARTIAL` (default `80`)
-- `ADDRESS_SCORE_MEDIUM_PARTIAL` (default `55`)
-- `ADDRESS_SCORE_WEAK_PARTIAL` (default `30`)
-- `ADDRESS_SCORE_MIN_INCLUDE` (default `1`)
+- `ADDRESS_TRIGRAM_MIN_SIMILARITY` (default `0.12`)
+- `ADDRESS_TRIGRAM_MIN_WORD_SIMILARITY` (default `0.52`)
+
+### Search Migration Requirement (pg_trgm)
+After pulling latest backend changes, run DB migration before starting/redeploying:
+```bash
+cd KOTS/flask
+flask db upgrade
+```
+
+The migration enables `pg_trgm` and creates trigram indexes required for search relevance and performance.
 
 ## Dockerized Run Guide
 Use Docker Compose from `KOTS/flask`.

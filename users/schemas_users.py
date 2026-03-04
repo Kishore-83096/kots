@@ -153,6 +153,21 @@ def validate_flat_search_params(args):
     if available_only is None:
         errors.append("available_only must be a boolean.")
 
+    status = None
+    status_raw = (args.get("status") or "").strip().lower() or None
+    if status_raw:
+        if status_raw in ("true", "available"):
+            status = "available"
+        elif status_raw in ("false", "unavailable"):
+            status = "unavailable"
+        elif status_raw == "all":
+            status = "all"
+        else:
+            errors.append("status must be 'all', 'available', or 'unavailable'.")
+
+    if status is None:
+        status = "available" if available_only else "all"
+
     min_rent = None
     max_rent = None
 
@@ -192,6 +207,7 @@ def validate_flat_search_params(args):
         "state": state,
         "flat_type": flat_type,
         "available_only": available_only,
+        "status": status,
         "min_rent": min_rent,
         "max_rent": max_rent,
         "page": page,

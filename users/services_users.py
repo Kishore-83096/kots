@@ -1,7 +1,5 @@
 from flask_jwt_extended import create_access_token
 from uuid import uuid4
-import re
-from difflib import SequenceMatcher
 from flask import current_app, has_app_context
 from extensions import db
 import cloudinary
@@ -10,6 +8,7 @@ import os
 from users.models_users import RegistrationUser, UserProfile, RevokedToken
 from admins.models_admins import Building, Tower, Flat, FlatPicture, Booking, Amenity
 from sqlalchemy.orm import selectinload
+from sqlalchemy import func, literal, or_
 from common.image_compression import compress_image_to_100kb
 from users.schemas_users import (
     validate_registration_payload,
@@ -50,81 +49,62 @@ def _error(status_code, message, user_message):
     }
 
 
-def _tokenize_words(value):
-    if value is None:
-        return []
-    return re.findall(r"[a-z0-9]+", str(value).lower())
-
-
 def _search_tuning():
     cfg = current_app.config if has_app_context() else {}
     return {
-        "strong_ratio": float(cfg.get("ADDRESS_MATCH_STRONG_RATIO", 0.8)),
-        "medium_ratio": float(cfg.get("ADDRESS_MATCH_MEDIUM_RATIO", 0.5)),
-        "fuzzy_high_ratio": float(cfg.get("ADDRESS_MATCH_FUZZY_HIGH_RATIO", 0.72)),
-        "fuzzy_medium_ratio": float(cfg.get("ADDRESS_MATCH_FUZZY_MEDIUM_RATIO", 0.55)),
-        "score_exact": float(cfg.get("ADDRESS_SCORE_EXACT", 100)),
-        "score_strong": float(cfg.get("ADDRESS_SCORE_STRONG_PARTIAL", 80)),
-        "score_medium": float(cfg.get("ADDRESS_SCORE_MEDIUM_PARTIAL", 55)),
-        "score_weak": float(cfg.get("ADDRESS_SCORE_WEAK_PARTIAL", 30)),
-        "score_fuzzy_high": float(cfg.get("ADDRESS_SCORE_FUZZY_HIGH", 26)),
-        "score_fuzzy_medium": float(cfg.get("ADDRESS_SCORE_FUZZY_MEDIUM", 16)),
-        "score_fuzzy_low": float(cfg.get("ADDRESS_SCORE_FUZZY_LOW", 6)),
-        "min_include": float(cfg.get("ADDRESS_SCORE_MIN_INCLUDE", 5)),
+        "min_similarity": float(cfg.get("ADDRESS_TRIGRAM_MIN_SIMILARITY", 0.12)),
+        "min_word_similarity": float(cfg.get("ADDRESS_TRIGRAM_MIN_WORD_SIMILARITY", 0.52)),
     }
 
 
-def _single_word_score(query_word, address_word):
-    if not query_word or not address_word:
-        return 0.0
+def _normalized_search_text(search_text):
+    return func.lower(literal((search_text or "").strip()))
 
-    if query_word == address_word:
-        return _search_tuning()["score_exact"]
 
+def _address_rank_and_filter(search_text, include_name=False):
     tuning = _search_tuning()
+    query_text = _normalized_search_text(search_text)
+    address_text = func.lower(func.coalesce(Building.address, ""))
+    city_text = func.lower(func.coalesce(Building.city, ""))
+    state_text = func.lower(func.coalesce(Building.state, ""))
+    pincode_text = func.lower(func.coalesce(Building.pincode, ""))
+    full_address = func.concat_ws(" ", address_text, city_text, state_text, pincode_text)
 
-    if query_word in address_word or address_word in query_word:
-        smaller = min(len(query_word), len(address_word))
-        larger = max(len(query_word), len(address_word))
-        ratio = smaller / larger if larger else 0.0
+    similarity_score = func.greatest(
+        func.similarity(address_text, query_text),
+        func.similarity(city_text, query_text),
+        func.similarity(state_text, query_text),
+        func.similarity(pincode_text, query_text),
+        func.similarity(full_address, query_text),
+    )
+    word_similarity_score = func.greatest(
+        func.word_similarity(query_text, address_text),
+        func.word_similarity(query_text, city_text),
+        func.word_similarity(query_text, state_text),
+        func.word_similarity(query_text, pincode_text),
+        func.word_similarity(query_text, full_address),
+    )
+    rank = (similarity_score * 0.35) + (word_similarity_score * 0.65)
 
-        if ratio >= tuning["strong_ratio"]:
-            return tuning["score_strong"]
-        if ratio >= tuning["medium_ratio"]:
-            return tuning["score_medium"]
-        return tuning["score_weak"]
+    if include_name:
+        building_name = func.lower(func.coalesce(Building.name, ""))
+        name_word_similarity = func.word_similarity(query_text, building_name)
+        name_similarity = func.similarity(building_name, query_text)
+        rank = func.greatest(rank, (name_word_similarity * 0.9), (name_similarity * 0.8))
 
-    # Fuzzy similarity allows typo-tolerant ranking (e.g., "Madhapur" vs "Madapur").
-    fuzzy_ratio = SequenceMatcher(None, query_word, address_word).ratio()
-    if fuzzy_ratio >= tuning["fuzzy_high_ratio"]:
-        return tuning["score_fuzzy_high"] + (fuzzy_ratio * 4)
-    if fuzzy_ratio >= tuning["fuzzy_medium_ratio"]:
-        return tuning["score_fuzzy_medium"] + (fuzzy_ratio * 4)
-    if fuzzy_ratio >= 0.35:
-        return tuning["score_fuzzy_low"] + (fuzzy_ratio * 4)
-    return fuzzy_ratio * 2
+    min_similarity = tuning["min_similarity"]
+    min_word_similarity = tuning["min_word_similarity"]
+    trigram_ops = [
+        address_text.bool_op("%")(query_text),
+        city_text.bool_op("%")(query_text),
+        state_text.bool_op("%")(query_text),
+        pincode_text.bool_op("%")(query_text),
+    ]
+    if include_name:
+        trigram_ops.append(func.lower(func.coalesce(Building.name, "")).bool_op("%")(query_text))
+    include_filter = or_(*trigram_ops, similarity_score >= min_similarity, word_similarity_score >= min_word_similarity)
 
-
-def _address_word_match_score(search_address, candidate_address):
-    query_words = _tokenize_words(search_address)
-    address_words = _tokenize_words(candidate_address)
-
-    if not query_words or not address_words:
-        return 0.0
-
-    per_word_scores = []
-    for query_word in query_words:
-        best = 0.0
-        for address_word in address_words:
-            score = _single_word_score(query_word, address_word)
-            if score > best:
-                best = score
-        per_word_scores.append(best)
-
-    if not per_word_scores:
-        return 0.0
-
-    return sum(per_word_scores) / len(per_word_scores)
+    return rank, include_filter
 
 
 def _serialize_manager(admin_user, admin_profile):
@@ -660,45 +640,60 @@ def search_flats_service(args):
     page = params["page"]
     per_page = params["per_page"]
 
-    query = (
+    base_query = (
         db.session.query(Flat, Tower, Building)
         .join(Tower, Flat.tower_id == Tower.id)
         .join(Building, Tower.building_id == Building.id)
     )
 
-    if params["available_only"]:
-        query = query.filter(Flat.is_available.is_(True))
-
     if params["city"]:
-        query = query.filter(Building.city.ilike(f"%{params['city']}%"))
+        base_query = base_query.filter(Building.city.ilike(f"%{params['city']}%"))
     if params["state"]:
-        query = query.filter(Building.state.ilike(f"%{params['state']}%"))
+        base_query = base_query.filter(Building.state.ilike(f"%{params['state']}%"))
     if params["flat_type"]:
-        query = query.filter(Flat.bhk_type.ilike(f"%{params['flat_type']}%"))
+        base_query = base_query.filter(Flat.bhk_type.ilike(f"%{params['flat_type']}%"))
 
     if params["min_rent"] is not None:
-        query = query.filter(Flat.rent_amount >= params["min_rent"])
+        base_query = base_query.filter(Flat.rent_amount >= params["min_rent"])
     if params["max_rent"] is not None:
-        query = query.filter(Flat.rent_amount <= params["max_rent"])
+        base_query = base_query.filter(Flat.rent_amount <= params["max_rent"])
 
     if params["address"]:
-        min_include = _search_tuning()["min_include"]
-        rows = query.all()
-        scored_rows = []
-        for flat, tower, building in rows:
-            score = _address_word_match_score(params["address"], building.address)
-            if score < min_include:
-                continue
-            scored_rows.append((score, flat, tower, building))
+        rank, include_filter = _address_rank_and_filter(params["address"])
+        rank_score = rank.label("rank_score")
+        ranked_base_query = base_query.add_columns(rank_score).filter(include_filter)
 
-        scored_rows.sort(key=lambda item: (-item[0], -item[1].id))
+        all_count = ranked_base_query.order_by(None).count()
+        available_count = ranked_base_query.filter(Flat.is_available.is_(True)).order_by(None).count()
+        unavailable_count = ranked_base_query.filter(Flat.is_available.is_(False)).order_by(None).count()
 
-        total = len(scored_rows)
+        selected_query = ranked_base_query
+        if params["status"] == "available":
+            selected_query = selected_query.filter(Flat.is_available.is_(True))
+        elif params["status"] == "unavailable":
+            selected_query = selected_query.filter(Flat.is_available.is_(False))
+
+        total = selected_query.order_by(None).count()
         total_pages = (total + per_page - 1) // per_page if total else 0
-        start = (page - 1) * per_page
-        end = start + per_page
-        paged_rows = [(flat, tower, building) for _, flat, tower, building in scored_rows[start:end]]
+        raw_rows = (
+            selected_query
+            .order_by(rank_score.desc(), Flat.id.desc())
+            .offset((page - 1) * per_page)
+            .limit(per_page)
+            .all()
+        )
+        paged_rows = [(flat, tower, building) for flat, tower, building, _ in raw_rows]
     else:
+        all_count = base_query.count()
+        available_count = base_query.filter(Flat.is_available.is_(True)).count()
+        unavailable_count = base_query.filter(Flat.is_available.is_(False)).count()
+
+        query = base_query
+        if params["status"] == "available":
+            query = query.filter(Flat.is_available.is_(True))
+        elif params["status"] == "unavailable":
+            query = query.filter(Flat.is_available.is_(False))
+
         total = query.count()
         total_pages = (total + per_page - 1) // per_page
         paged_rows = (
@@ -708,10 +703,17 @@ def search_flats_service(args):
             .all()
         )
 
+    response_data = serialize_flat_search_response(paged_rows, page, per_page, total, total_pages)
+    response_data["status_counts"] = {
+        "all": all_count,
+        "available": available_count,
+        "unavailable": unavailable_count,
+    }
+
     return {
         "status_code": 200,
         "message": "Flat search results fetched",
-        "data": serialize_flat_search_response(paged_rows, page, per_page, total, total_pages),
+        "data": response_data,
     }, None
 
 
@@ -733,28 +735,22 @@ def search_buildings_service(args):
         base_query = base_query.filter(Building.state.ilike(f"%{params['state']}%"))
 
     if params["address"]:
-        min_include = _search_tuning()["min_include"]
-        buildings = (
-            base_query.options(
+        rank, include_filter = _address_rank_and_filter(params["address"], include_name=True)
+        rank_score = rank.label("rank_score")
+        ranked_query = base_query.add_columns(rank_score).filter(include_filter)
+        total = ranked_query.order_by(None).count()
+        total_pages = (total + per_page - 1) // per_page if total else 0
+        rows = (
+            ranked_query.options(
                 selectinload(Building.towers).selectinload(Tower.flats),
                 selectinload(Building.amenities),
-            ).all()
+            )
+            .order_by(rank_score.desc(), Building.id.desc())
+            .offset((page - 1) * per_page)
+            .limit(per_page)
+            .all()
         )
-
-        scored_buildings = []
-        for building in buildings:
-            score = _address_word_match_score(params["address"], building.address)
-            if score < min_include:
-                continue
-            scored_buildings.append((score, building))
-
-        scored_buildings.sort(key=lambda item: (-item[0], -item[1].id))
-
-        total = len(scored_buildings)
-        total_pages = (total + per_page - 1) // per_page if total else 0
-        start = (page - 1) * per_page
-        end = start + per_page
-        page_buildings = [building for _, building in scored_buildings[start:end]]
+        page_buildings = [building for building, _ in rows]
     else:
         total = base_query.count()
         total_pages = (total + per_page - 1) // per_page

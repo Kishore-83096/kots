@@ -4,6 +4,7 @@ import cloudinary.uploader
 from extensions import db
 from common.image_compression import compress_image_to_100kb
 from admins.models_admins import Building, Tower, Flat, FlatPicture, Amenity, Booking
+from users.models_users import RegistrationUser, UserProfile
 from admins.schemas_admins import (
     serialize_admins_health,
     serialize_admins_dashboard,
@@ -51,6 +52,16 @@ def _require_admin_id(admin_id):
         return int(admin_id), None
     except (TypeError, ValueError):
         return None, _error(401, "Unauthorized", "Invalid token.")
+
+
+def _booking_user_identity(booking, user, profile):
+    user_email = user.email if user else None
+    username = None
+    if profile and profile.username:
+        username = str(profile.username).strip() or None
+    if not username and booking and booking.user_name:
+        username = str(booking.user_name).strip() or None
+    return username or user_email or "Unknown user", user_email
 
 
 def _get_admin_owned_flat(admin_id, flat_id):
@@ -1158,19 +1169,26 @@ def list_admin_bookings_service(admin_id):
         return None, err
 
     rows = (
-        db.session.query(Booking, Building, Tower, Flat)
+        db.session.query(Booking, Building, Tower, Flat, RegistrationUser, UserProfile)
         .join(Building, Booking.building_id == Building.id)
         .join(Tower, Booking.tower_id == Tower.id)
         .join(Flat, Booking.flat_id == Flat.id)
+        .join(RegistrationUser, Booking.user_id == RegistrationUser.id)
+        .outerjoin(UserProfile, UserProfile.user_id == RegistrationUser.id)
         .filter(Building.admin_id == admin_id)
         .order_by(Booking.id.desc())
         .all()
     )
 
+    items = []
+    for booking, building, tower, flat, user, profile in rows:
+        user_display, user_email = _booking_user_identity(booking, user, profile)
+        items.append(serialize_booking_admin(booking, building, tower, flat, user_display, user_email))
+
     return {
         "status_code": 200,
         "message": "Bookings fetched",
-        "data": [serialize_booking_admin(b, bd, t, f) for (b, bd, t, f) in rows],
+        "data": items,
     }, None
 
 
@@ -1181,10 +1199,12 @@ def get_admin_booking_service(admin_id, booking_id):
         return None, err
 
     row = (
-        db.session.query(Booking, Building, Tower, Flat)
+        db.session.query(Booking, Building, Tower, Flat, RegistrationUser, UserProfile)
         .join(Building, Booking.building_id == Building.id)
         .join(Tower, Booking.tower_id == Tower.id)
         .join(Flat, Booking.flat_id == Flat.id)
+        .join(RegistrationUser, Booking.user_id == RegistrationUser.id)
+        .outerjoin(UserProfile, UserProfile.user_id == RegistrationUser.id)
         .filter(Building.admin_id == admin_id, Booking.id == booking_id)
         .first()
     )
@@ -1192,11 +1212,12 @@ def get_admin_booking_service(admin_id, booking_id):
     if not row:
         return None, _error(404, "Not Found", "Booking not found.")
 
-    booking, building, tower, flat = row
+    booking, building, tower, flat, user, profile = row
+    user_display, user_email = _booking_user_identity(booking, user, profile)
     return {
         "status_code": 200,
         "message": "Booking fetched",
-        "data": serialize_booking_admin(booking, building, tower, flat),
+        "data": serialize_booking_admin(booking, building, tower, flat, user_display, user_email),
     }, None
 
 
