@@ -539,7 +539,12 @@ def serialize_building_search_response(buildings, page, per_page, total, total_p
     }
 
 
-def serialize_flat_detail(flat, tower, building):
+def serialize_flat_detail(flat, tower, building, admin_user=None, admin_profile=None):
+    admin_username = admin_profile.username if admin_profile else None
+    admin_phone = admin_profile.mobile_number if admin_profile else None
+    admin_email = admin_user.email if admin_user else None
+    manager_name = admin_username or admin_email
+
     return {
         "flat": serialize_flat_summary(flat),
         "tower": {
@@ -559,6 +564,16 @@ def serialize_flat_detail(flat, tower, building):
         },
         "pictures": [serialize_flat_picture(picture) for picture in (flat.pictures or [])],
         "amenities": [serialize_amenity_summary(amenity) for amenity in (flat.amenities or [])],
+        "manager": {
+            "name": manager_name,
+            "username": admin_username,
+            "email": admin_email,
+            "phone": admin_phone,
+            "mobile_number": admin_phone,
+        },
+        "admin_name": manager_name,
+        "admin_email": admin_email,
+        "admin_phone": admin_phone,
     }
 
 
@@ -574,4 +589,22 @@ def serialize_booking(booking):
         "building_full_address": booking.building_full_address,
         "user_name": booking.user_name,
         "created_at": booking.created_at.isoformat(),
+    }
+
+
+def serialize_public_flat_listing(flat, building):
+    return {
+        "flat_id": flat.id,
+        "tower_id": flat.tower_id,
+        "building_id": building.id,
+        "flat_status": "available" if flat.is_available else "unavailable",
+        "rent_per_month": str(flat.rent_amount),
+        "picture_url": flat.picture_url,
+        "flat_number": flat.flat_number,
+        "floor_number": flat.floor_number,
+        "bhk_type": flat.bhk_type,
+        "building_name": building.name,
+        "building_address": ", ".join(
+            part for part in [building.address, building.city, building.state, building.pincode] if part
+        ),
     }

@@ -24,6 +24,8 @@ from users.services_users import (
     get_flat_detail_service,
     list_user_flat_pictures_service,
     list_building_towers_service,
+    list_building_flats_service,
+    list_all_flats_service,
     create_security_deposit_booking_service,
     list_user_bookings_service,
     get_user_booking_service,
@@ -218,6 +220,31 @@ def list_flat_pictures(building_id, tower_id, flat_id):
 @users_bp.route("/buildings/<int:building_id>/towers", methods=["GET"])
 def list_building_towers(building_id):
     result, err = list_building_towers_service(building_id)
+    if err:
+        return error_response(**err, add_size=True)
+    return success_response(status_code=result["status_code"], message=result["message"], data=result["data"], add_size=True)
+
+
+@users_bp.route("/buildings/<int:building_id>/flats", methods=["GET"])
+def list_building_flats(building_id):
+    result, err = list_building_flats_service(
+        building_id,
+        request.args.get("status"),
+        request.args.get("page"),
+        request.args.get("per_page"),
+    )
+    if err:
+        return error_response(**err, add_size=True)
+    return success_response(status_code=result["status_code"], message=result["message"], data=result["data"], add_size=True)
+
+
+@users_bp.route("/flats", methods=["GET"])
+def list_all_flats():
+    result, err = list_all_flats_service(
+        request.args.get("page"),
+        request.args.get("per_page"),
+        request.args.get("status"),
+    )
     if err:
         return error_response(**err, add_size=True)
     return success_response(status_code=result["status_code"], message=result["message"], data=result["data"], add_size=True)

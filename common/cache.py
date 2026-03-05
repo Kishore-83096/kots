@@ -1,8 +1,17 @@
+import re
+
 from flask import current_app, request
 
 
 IMAGE_URL_KEYS = {"picture_url", "profile_pic_url"}
 MODULE_PREFIXES = ("/users", "/admins", "/master")
+PUBLIC_IMAGE_CACHE_PATH_PATTERNS = (
+    re.compile(r"^/users/buildings/\d+/towers/\d+/flats/\d+$"),
+    re.compile(r"^/users/buildings/\d+/towers/\d+/flats/\d+/pictures$"),
+    re.compile(r"^/users/buildings/\d+/flats$"),
+    re.compile(r"^/users/buildings/\d+/amenities$"),
+    re.compile(r"^/users/buildings/\d+/amenities/\d+$"),
+)
 
 
 def _contains_image_urls(value):
@@ -28,6 +37,11 @@ def _contains_image_urls(value):
     return False
 
 
+def _is_public_image_cache_endpoint(path):
+    normalized_path = path or ""
+    return any(pattern.match(normalized_path) for pattern in PUBLIC_IMAGE_CACHE_PATH_PATTERNS)
+
+
 def apply_get_image_cache_headers(response):
     if request.method != "GET":
         return response
@@ -43,6 +57,13 @@ def apply_get_image_cache_headers(response):
         return response
 
     if not _contains_image_urls(payload.get("data")):
+        return response
+
+    # Public discovery/image-heavy APIs for flat details page: cache all image-bearing data for 5 min.
+    if _is_public_image_cache_endpoint(request.path):
+        response.headers["Cache-Control"] = "public, max-age=300"
+        response.add_etag()
+        response.make_conditional(request)
         return response
 
     max_age = int(current_app.config.get("IMAGE_GET_CACHE_MAX_AGE", 300))

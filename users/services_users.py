@@ -37,6 +37,7 @@ from users.schemas_users import (
     serialize_flat_picture,
     serialize_tower_summary,
     serialize_booking,
+    serialize_public_flat_listing,
 )
 
 
@@ -786,10 +787,13 @@ def get_flat_detail_service(building_id, tower_id, flat_id):
     if not flat:
         return None, _error(404, "Not Found", "Flat not found for this tower.")
 
+    admin_user = RegistrationUser.query.filter_by(id=building.admin_id).first()
+    admin_profile = UserProfile.query.filter_by(user_id=building.admin_id).first()
+
     return {
         "status_code": 200,
         "message": "Flat fetched",
-        "data": serialize_flat_detail(flat, tower, building),
+        "data": serialize_flat_detail(flat, tower, building, admin_user, admin_profile),
     }, None
 
 
@@ -832,6 +836,129 @@ def list_building_towers_service(building_id):
         "status_code": 200,
         "message": "Towers fetched",
         "data": [serialize_tower_summary(tower) for tower in towers],
+    }, None
+
+
+def list_building_flats_service(building_id, status, page, per_page):
+    # Service: List all flats in a building with optional status filter and pagination.
+    try:
+        page = int(page or 1)
+    except (TypeError, ValueError):
+        return None, _error(400, "Validation Error", "page must be an integer.")
+
+    try:
+        per_page = int(per_page or 20)
+    except (TypeError, ValueError):
+        return None, _error(400, "Validation Error", "per_page must be an integer.")
+
+    if page < 1:
+        return None, _error(400, "Validation Error", "page must be >= 1.")
+    if per_page < 1 or per_page > 100:
+        return None, _error(400, "Validation Error", "per_page must be between 1 and 100.")
+
+    if status not in (None, "", "all", "available", "true", "false", "unavailable"):
+        return None, _error(
+            400,
+            "Validation Error",
+            "status must be 'all', 'available', 'unavailable', 'true', or 'false'.",
+        )
+
+    building = Building.query.filter_by(id=building_id).first()
+    if not building:
+        return None, _error(404, "Not Found", "Building not found.")
+
+    query = (
+        db.session.query(Flat, Tower, Building)
+        .join(Tower, Flat.tower_id == Tower.id)
+        .join(Building, Tower.building_id == Building.id)
+        .filter(Building.id == building_id)
+    )
+
+    if status in ("available", "true"):
+        query = query.filter(Flat.is_available.is_(True))
+    elif status in ("unavailable", "false"):
+        query = query.filter(Flat.is_available.is_(False))
+
+    total = query.order_by(None).count()
+    total_pages = (total + per_page - 1) // per_page if total else 0
+    rows = (
+        query.order_by(Tower.id.asc(), Flat.id.desc())
+        .offset((page - 1) * per_page)
+        .limit(per_page)
+        .all()
+    )
+
+    return {
+        "status_code": 200,
+        "message": "Building flats fetched",
+        "data": serialize_flat_search_response(rows, page, per_page, total, total_pages),
+    }, None
+
+
+def list_all_flats_service(page, per_page, status):
+    # Service: List all flats across all buildings with essential display details.
+    try:
+        page = int(page or 1)
+    except (TypeError, ValueError):
+        return None, _error(400, "Validation Error", "page must be an integer.")
+
+    try:
+        per_page = int(per_page or 9)
+    except (TypeError, ValueError):
+        return None, _error(400, "Validation Error", "per_page must be an integer.")
+
+    if page < 1:
+        return None, _error(400, "Validation Error", "page must be >= 1.")
+    if per_page < 1 or per_page > 100:
+        return None, _error(400, "Validation Error", "per_page must be between 1 and 100.")
+
+    normalized_status = (status or "").strip().lower()
+    if normalized_status not in ("", "all", "available", "unavailable", "true", "false"):
+        return None, _error(
+            400,
+            "Validation Error",
+            "status must be 'all', 'available', 'unavailable', 'true', or 'false'.",
+        )
+
+    base_query = (
+        db.session.query(Flat, Building)
+        .join(Tower, Flat.tower_id == Tower.id)
+        .join(Building, Tower.building_id == Building.id)
+    )
+    all_count = base_query.order_by(None).count()
+    available_count = base_query.filter(Flat.is_available.is_(True)).order_by(None).count()
+    unavailable_count = base_query.filter(Flat.is_available.is_(False)).order_by(None).count()
+
+    query = base_query
+    if normalized_status in ("available", "true"):
+        query = query.filter(Flat.is_available.is_(True))
+    elif normalized_status in ("unavailable", "false"):
+        query = query.filter(Flat.is_available.is_(False))
+
+    total = query.order_by(None).count()
+    total_pages = (total + per_page - 1) // per_page if total else 0
+    rows = (
+        query.order_by(Flat.id.desc())
+        .offset((page - 1) * per_page)
+        .limit(per_page)
+        .all()
+    )
+
+    return {
+        "status_code": 200,
+        "message": "All flats fetched",
+        "data": {
+            "items": [serialize_public_flat_listing(flat, building) for flat, building in rows],
+            "page": page,
+            "per_page": per_page,
+            "total": total,
+            "total_pages": total_pages,
+            "status_counts": {
+                "all": all_count,
+                "available": available_count,
+                "unavailable": unavailable_count,
+            },
+        },
     }, None
 
 

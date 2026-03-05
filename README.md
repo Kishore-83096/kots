@@ -1,4 +1,4 @@
-# KOTS Flask Backend
+﻿# KOTS Flask Backend
 - **Main Live App (Frontend):** https://kots-frontend-445482244619.asia-south1.run.app
 - **Live API (Backend):** https://kots-flask-445482244619.asia-south1.run.app
 - **Deployment Platform:** Google Cloud Run (Docker)
@@ -86,6 +86,7 @@ The application uses JWT-based auth, SQLAlchemy ORM, Alembic migrations, and opt
   - `GET /users/buildings/{building_id}/towers`
   - `GET /users/buildings/{building_id}/towers/{tower_id}`
   - `GET /users/buildings/{building_id}/towers/{tower_id}/flats`
+  - `GET /users/buildings/{building_id}/flats`
   - `GET /users/buildings/{building_id}/towers/{tower_id}/flats/{flat_id}`
   - `GET /users/buildings/{building_id}/towers/{tower_id}/flats/{flat_id}/pictures`
   - `GET /users/flats/search`
@@ -117,7 +118,13 @@ The application uses JWT-based auth, SQLAlchemy ORM, Alembic migrations, and opt
     - `user_email`
   - avoids exposing only raw `user_id` in booking cards/details.
 - End-user API errors are more specific across flows (including image upload) so frontend can show clearer failure reasons.
-
+- Added building-level flat discovery endpoint for similar-properties use cases:
+  - `GET /users/buildings/{building_id}/flats`
+  - supports `status=all|available|unavailable`, `page`, `per_page`
+  - returns flattened flats across all towers in a building with image URLs and pagination metadata.
+- Flat detail payload now includes manager/admin contact fields for UI display:
+  - `manager.name`, `manager.email`, `manager.phone`
+  - backward-compatible aliases: `admin_name`, `admin_email`, `admin_phone`.
 ## Why This Application Is Used
 This application is used to manage the full rental discovery and booking flow for apartment communities (buildings/residencies, towers, and flats) in one system.
 
@@ -446,6 +453,17 @@ All endpoints return a common envelope from `common/response.py`:
   - `page`: integer >= 1 (optional, default `1`)
 - Purpose: paginated flat listing (`per_page=10`).
 
+#### `GET /users/buildings/{building_id}/flats`
+- Auth: none
+- Query:
+  - `status`: `all|available|unavailable` (optional, default `all`)
+  - `page`: integer >= 1 (optional, default `1`)
+  - `per_page`: integer `1..100` (optional, default `10`)
+- Purpose: paginated flat listing across all towers in the selected building.
+- Notes:
+  - designed for Similar Properties on flat-detail UI
+  - each item includes flat image, tower metadata, and building context.
+
 #### `GET /users/flats/search`
 - Auth: none
 - Query:
@@ -473,7 +491,7 @@ All endpoints return a common envelope from `common/response.py`:
 
 #### `GET /users/buildings/{building_id}/towers/{tower_id}/flats/{flat_id}`
 - Auth: none
-- Purpose: flat detail including building/tower context and amenities.
+- Purpose: flat detail including building/tower context, amenities, and manager contact fields (`name`, `email`, `phone`).
 
 #### `POST /users/flats/{flat_id}/bookings`
 - Auth: JWT required
@@ -2306,3 +2324,4 @@ Response JSON:
   "size": "360b"
 }
 ```
+
