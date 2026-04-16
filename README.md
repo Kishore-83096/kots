@@ -1,6 +1,6 @@
 ﻿# KOTS Flask Backend
-- **Main Live App (Frontend):** https://kots-frontend-445482244619.asia-south1.run.app
-- **Live API (Backend):** https://kots-flask-445482244619.asia-south1.run.app
+- **Main Live App (Frontend):** https://kotsfrontend.onrender.com/home
+- **Live API (Backend):** https://kots.onrender.com
 - **Deployment Platform:** Google Cloud Run (Docker)
 
 ## Quick Run Modes
